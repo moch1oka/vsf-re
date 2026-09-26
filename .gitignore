@@ -1,0 +1,27 @@
+# Ignore Everything
+*
+
+# But not:
+!*.cpp
+!*.c
+!*.hpp
+!*.h
+!*.cu
+!*.rc
+!.gitignore
+!*.yml
+!*.yaml
+!*.sln
+!*.vcxproj
+!*.vcxproj.filters
+!*.cfg
+!*.txt
+!*.md
+!*.bmp
+!*.png
+!*.ico
+!CMakeLists.txt
+!LICENSE
+# Or directories
+!*/
+

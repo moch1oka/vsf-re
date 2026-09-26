@@ -1,0 +1,142 @@
+name: Build VideoSubFinder (x64 Release)
+
+on:
+  push:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install CUDA Toolkit 12.0
+        uses: Jimver/cuda-toolkit@v0.2.21
+        id: cuda-toolkit
+        with:
+          cuda: '12.0.1'
+          method: 'network'
+
+      - name: Setup CUDA MSBuild Extensions
+        shell: pwsh
+        run: |
+          $cudaPath = $env:CUDA_PATH
+          $vsPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+          Write-Host "CUDA_PATH is: $cudaPath"
+          Write-Host "Copying CUDA MSBuild extensions to: $vsPath"
+          if (Test-Path "$cudaPath\extras\visual_studio_integration\MSBuildExtensions") {
+            Copy-Item -Path "$cudaPath\extras\visual_studio_integration\MSBuildExtensions\*" -Destination $vsPath -Force
+            Get-ChildItem -Path $vsPath -Filter "CUDA*"
+          } else {
+            Write-Error "Could not find CUDA MSBuildExtensions at $cudaPath\extras\visual_studio_integration\MSBuildExtensions"
+            exit 1
+          }
+
+      - name: Setup wxWidgets 3.2.1
+        shell: pwsh
+        run: |
+          Write-Host "Downloading wxWidgets 3.2.1 headers and libraries..."
+          New-Item -ItemType Directory -Force -Path "C:\wxWidgets-3.2.1"
+          curl.exe -L -s "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.1/wxWidgets-3.2.1-headers.7z" -o "C:\wxWidgets-3.2.1\headers.7z"
+          curl.exe -L -s "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.1/wxMSW-3.2.1_vc14x_x64_Dev.7z" -o "C:\wxWidgets-3.2.1\dev.7z"
+          curl.exe -L -s "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.1/wxMSW-3.2.1_vc14x_x64_ReleaseDLL.7z" -o "C:\wxWidgets-3.2.1\dll.7z"
+          
+          7z x "C:\wxWidgets-3.2.1\headers.7z" -o"C:\wxWidgets-3.2.1" -y > $null
+          7z x "C:\wxWidgets-3.2.1\dev.7z" -o"C:\wxWidgets-3.2.1" -y > $null
+          7z x "C:\wxWidgets-3.2.1\dll.7z" -o"C:\wxWidgets-3.2.1" -y > $null
+
+          New-Item -ItemType Directory -Force -Path "C:\wxWidgets-3.2.1\lib\vc_x64_lib"
+          if (Test-Path "C:\wxWidgets-3.2.1\lib\vc14x_x64_dll") {
+            Copy-Item -Path "C:\wxWidgets-3.2.1\lib\vc14x_x64_dll\*" -Destination "C:\wxWidgets-3.2.1\lib\vc_x64_lib\" -Recurse -Force
+          }
+          if (Test-Path "C:\wxWidgets-3.2.1\lib\vc14x_x64_lib") {
+            Copy-Item -Path "C:\wxWidgets-3.2.1\lib\vc14x_x64_lib\*" -Destination "C:\wxWidgets-3.2.1\lib\vc_x64_lib\" -Recurse -Force
+          }
+          Get-ChildItem "C:\wxWidgets-3.2.1\lib\vc_x64_lib"
+
+      - name: Setup OpenCV 4.7.0
+        shell: pwsh
+        run: |
+          Write-Host "Downloading OpenCV 4.7.0..."
+          curl.exe -L -s "https://github.com/opencv/opencv/releases/download/4.7.0/opencv-4.7.0-windows.exe" -o "C:\opencv.exe"
+          7z x "C:\opencv.exe" -o"C:\opencv_temp" -y > $null
+
+          New-Item -ItemType Directory -Force -Path "C:\opencv_build\install\include"
+          New-Item -ItemType Directory -Force -Path "C:\opencv_build\lib\Release"
+
+          Copy-Item -Recurse -Path "C:\opencv_temp\opencv\build\include\*" -Destination "C:\opencv_build\install\include\"
+          Copy-Item -Path "C:\opencv_temp\opencv\build\x64\vc16\lib\opencv_world470.lib" -Destination "C:\opencv_build\lib\Release\"
+          Get-ChildItem "C:\opencv_build\lib\Release"
+
+      - name: Setup FFmpeg 5.1.2
+        shell: pwsh
+        run: |
+          Write-Host "Downloading FFmpeg 5.1.2..."
+          curl.exe -L -s "https://github.com/GyanD/codexffmpeg/releases/download/5.1.2/ffmpeg-5.1.2-full_build-shared.7z" -o "C:\ffmpeg.7z"
+          7z x "C:\ffmpeg.7z" -o"C:\ffmpeg_temp" -y > $null
+
+          $extracted = Get-ChildItem -Directory "C:\ffmpeg_temp" | Select-Object -First 1
+          Move-Item $extracted.FullName "C:\ffmpeg"
+          Get-ChildItem "C:\ffmpeg\lib"
+
+      - name: Build VideoSubFinderWXW Solution
+        shell: pwsh
+        run: |
+          $env:WX_WIDGETS_PATH = "C:\wxWidgets-3.2.1"
+          $env:OPENCV_BUILD_PATH_X64 = "C:\opencv_build"
+          $env:OPENCV_LIBS_VER = "470"
+          $env:FFMPEG_PATH_X64 = "C:\ffmpeg"
+          $env:CUDA_TOOLKIT_PATH = $env:CUDA_PATH
+
+          msbuild Interfaces\VideoSubFinderWXW\VideoSubFinderWXW.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:WX_WIDGETS_PATH="C:\wxWidgets-3.2.1" `
+            /p:OPENCV_BUILD_PATH_X64="C:\opencv_build" `
+            /p:OPENCV_LIBS_VER="470" `
+            /p:FFMPEG_PATH_X64="C:\ffmpeg" `
+            /p:CUDA_TOOLKIT_PATH="$env:CUDA_PATH" `
+            /m
+
+      - name: Package Artifacts
+        shell: pwsh
+        run: |
+          $outDir = "Build\Release_x64"
+          if (-not (Test-Path "$outDir\VideoSubFinderWXW.exe")) {
+            Write-Error "VideoSubFinderWXW.exe was not found in $outDir!"
+            exit 1
+          }
+
+          Write-Host "Packaging runtime DLLs..."
+          Copy-Item "C:\opencv_temp\opencv\build\x64\vc16\bin\opencv_world470.dll" $outDir -Force
+          if (Test-Path "C:\opencv_temp\opencv\build\x64\vc16\bin\opencv_videoio_ffmpeg470_64.dll") {
+            Copy-Item "C:\opencv_temp\opencv\build\x64\vc16\bin\opencv_videoio_ffmpeg470_64.dll" $outDir -Force
+          }
+
+          Copy-Item "C:\ffmpeg\bin\*.dll" $outDir -Force
+
+          if (Test-Path "C:\wxWidgets-3.2.1\lib\vc14x_x64_dll") {
+            Copy-Item "C:\wxWidgets-3.2.1\lib\vc14x_x64_dll\*.dll" $outDir -Force
+          }
+
+          Copy-Item "$env:CUDA_PATH\bin\cudart*.dll" $outDir -Force
+          Copy-Item "$env:CUDA_PATH\bin\npp*.dll" $outDir -Force
+
+          Remove-Item -Path "$outDir\*.pdb" -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path "$outDir\*" -DestinationPath "VideoSubFinder_x64.zip" -Force
+          Write-Host "Build and packaging completed successfully!"
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoSubFinder_x64
+          path: VideoSubFinder_x64.zip
+          retention-days: 14
