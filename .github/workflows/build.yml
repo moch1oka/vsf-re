@@ -17,11 +17,11 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install CUDA Toolkit 12.0
+      - name: Install CUDA Toolkit 12.4
         uses: Jimver/cuda-toolkit@v0.2.21
         id: cuda-toolkit
         with:
-          cuda: '12.0.1'
+          cuda: '12.4.1'
           method: 'network'
 
       - name: Setup CUDA MSBuild Extensions
@@ -33,6 +33,9 @@ jobs:
           Write-Host "Copying CUDA MSBuild extensions to: $vsPath"
           if (Test-Path "$cudaPath\extras\visual_studio_integration\MSBuildExtensions") {
             Copy-Item -Path "$cudaPath\extras\visual_studio_integration\MSBuildExtensions\*" -Destination $vsPath -Force
+            Copy-Item -Path "$vsPath\CUDA 12.4.props" -Destination "$vsPath\CUDA 12.0.props" -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "$vsPath\CUDA 12.4.targets" -Destination "$vsPath\CUDA 12.0.targets" -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "$vsPath\CUDA 12.4.xml" -Destination "$vsPath\CUDA 12.0.xml" -Force -ErrorAction SilentlyContinue
             Get-ChildItem -Path $vsPath -Filter "CUDA*"
           } else {
             Write-Error "Could not find CUDA MSBuildExtensions at $cudaPath\extras\visual_studio_integration\MSBuildExtensions"

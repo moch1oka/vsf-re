@@ -1,4 +1,8 @@
 
+#ifndef _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+#define _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+#endif
+
 #include <nppi.h>
 #include "cuda_kernels.h"
 

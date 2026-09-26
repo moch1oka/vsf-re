@@ -40,6 +40,10 @@
 
 // -----------------------------------------------------------------------------
 
+#ifndef _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+#define _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 
