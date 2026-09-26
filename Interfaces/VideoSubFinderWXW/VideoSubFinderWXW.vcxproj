@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -294,7 +294,7 @@ xcopy /Y /S ..\..\Data\ $(OutDir)</Command>
       <AdditionalOptions>/EHsc %(AdditionalOptions)</AdditionalOptions>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
       <AdditionalIncludeDirectories>$(WX_WIDGETS_PATH)\lib\vc_x64_lib\mswu;$(WX_WIDGETS_PATH)\include;..\..\Components\Include;..\..\Components\IPAlgorithms;..\..\Components\OCVVideo;..\..\Components\FFMPEGVideo;$(OPENCV_BUILD_PATH_X64)\install\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>USE_CUDA;WIN64;__WXMSW__;_WINDOWS;NOPCH;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL;USE_CUDA;WIN64;__WXMSW__;_WINDOWS;NOPCH;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -339,7 +339,7 @@ xcopy /Y /S ..\..\Data\ $(OutDir)</Command>
       <AdditionalOptions>/EHsc %(AdditionalOptions)</AdditionalOptions>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
       <AdditionalIncludeDirectories>$(WX_WIDGETS_PATH)\lib\vc_x64_lib\mswu;$(WX_WIDGETS_PATH)\include;..\..\Components\Include;..\..\Components\IPAlgorithms;..\..\Components\OCVVideo;..\..\Components\FFMPEGVideo;$(OPENCV_BUILD_PATH_X64)\install\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>USE_CUDA;WIN64;__WXMSW__;_WINDOWS;NOPCH;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WXUSINGDLL;USE_CUDA;WIN64;__WXMSW__;_WINDOWS;NOPCH;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>

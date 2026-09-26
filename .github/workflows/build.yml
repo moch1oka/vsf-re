@@ -97,6 +97,7 @@ jobs:
           $env:OPENCV_LIBS_VER = "470"
           $env:FFMPEG_PATH_X64 = "C:\ffmpeg"
           $env:CUDA_TOOLKIT_PATH = $env:CUDA_PATH
+          $env:CL = "/DWXUSINGDLL"
 
           msbuild Interfaces\VideoSubFinderWXW\VideoSubFinderWXW.sln `
             /p:Configuration=Release `
