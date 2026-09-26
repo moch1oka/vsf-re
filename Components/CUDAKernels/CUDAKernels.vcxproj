@@ -135,7 +135,7 @@
       <GPUDebugInfo>true</GPUDebugInfo>
       <Optimization>Od</Optimization>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
-      <AdditionalOptions>-arch=all %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-arch=all -allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -158,7 +158,7 @@
       <GPUDebugInfo>true</GPUDebugInfo>
       <Optimization>Od</Optimization>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
-      <AdditionalOptions>-arch=all %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-arch=all -allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -183,7 +183,7 @@
       </CodeGeneration>
       <Runtime>MD</Runtime>
       <Optimization>O2</Optimization>
-      <AdditionalOptions>-arch=all %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-arch=all -allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -207,7 +207,7 @@
       <CodeGeneration>
       </CodeGeneration>
       <Runtime>MD</Runtime>
-      <AdditionalOptions>-arch=all %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-arch=all -allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugInfo|x64'">
@@ -238,7 +238,7 @@
       <Optimization>Od</Optimization>
       <AdditionalCompilerOptions>
       </AdditionalCompilerOptions>
-      <AdditionalOptions>-arch=all %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-arch=all -allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugInfo|Win32'">
@@ -266,7 +266,7 @@
       <GenerateRelocatableDeviceCode>false</GenerateRelocatableDeviceCode>
       <CodeGeneration>
       </CodeGeneration>
-      <AdditionalOptions>-arch=all %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-arch=all -allow-unsupported-compiler %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
