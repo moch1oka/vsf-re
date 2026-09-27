@@ -318,6 +318,7 @@ public:
 	wxString	m_button_clear_folders_text;
 	wxString	m_button_run_search_text;
 	wxString	m_button_run_search_stop_text;
+	wxString	m_button_clean_rgb_images_text = wxT("Clean RGB Images");
 	wxString	m_button_test_text;
 	wxString	m_test_result_after_first_filtration_label;
 	wxString	m_test_result_after_second_filtration_label;

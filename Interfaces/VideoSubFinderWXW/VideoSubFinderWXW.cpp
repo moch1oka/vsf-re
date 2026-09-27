@@ -18,6 +18,7 @@
 #include <wx/stdpaths.h>
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
+#include <wx/msgout.h>
 
 #ifndef WIN32
 #include <X11/Xlib.h>
@@ -181,6 +182,11 @@ void test()
 
 bool CVideoSubFinderApp::Initialize(int& argc, wxChar **argv)
 {
+	if (!wxApp::Initialize(argc, argv))
+	{
+		return false;
+	}
+
 #ifndef WIN32
 	XInitThreads();
 #endif
@@ -200,13 +206,22 @@ bool CVideoSubFinderApp::Initialize(int& argc, wxChar **argv)
 	SaveToReportLog("CVideoSubFinderApp::Initial LoadSettings...\n");
 	LoadSettings();
 
-	//test();
+	SaveToReportLog(wxString::Format("Command line arguments count: %d\n", argc));
+	for (int i = 0; i < argc; i++)
+	{
+		SaveToReportLog(wxString::Format("arg[%d]: %s\n", i, argv[i]));
+	}
 
 	g_pParser = new wxCmdLineParser();
 	SetParserDescription();
 	g_pParser->SetCmdLine(argc, argv);
-	if (g_pParser->Parse() != 0)
+	wxMessageOutputStderr errOut;
+	wxMessageOutput* prevOut = wxMessageOutput::Set(&errOut);
+	int parse_res = g_pParser->Parse(false);
+	wxMessageOutput::Set(prevOut);
+	if (parse_res != 0)
 	{
+		SaveToReportLog(wxString::Format("g_pParser->Parse failed with code: %d\n", parse_res));
 		return false;
 	}
 
@@ -225,21 +240,20 @@ bool CVideoSubFinderApp::Initialize(int& argc, wxChar **argv)
 		g_pParser = new wxCmdLineParser();
 		SetParserDescription();
 		g_pParser->SetCmdLine(argc, argv);
-		if (g_pParser->Parse() != 0)
+		prevOut = wxMessageOutput::Set(&errOut);
+		parse_res = g_pParser->Parse(false);
+		wxMessageOutput::Set(prevOut);
+		if (parse_res != 0)
 		{
 			return false;
 		}
 	}
 
-	SaveToReportLog("wxApp::Initialize...\n");
-	return wxApp::Initialize(argc, argv);
+	return true;
 }
 
 bool CVideoSubFinderApp::OnInit() 
 {
-    //if ( !wxApp::OnInit() )
-    //    return false;
-
 #ifdef __WXGTK__
     // Many version of wxGTK generate spurious diagnostic messages when
     // destroying wxNotebook (or removing pages from it), allow wxWidgets to
@@ -503,7 +517,14 @@ bool CVideoSubFinderApp::OnInit()
 		blnNeedToExit = true;
 	}
 
-	if (blnNeedToExit) return false;
+	if (blnNeedToExit)
+	{
+		if (m_pMainWnd && m_pMainWnd->m_pVideo)
+		{
+			m_pMainWnd->m_pVideo->CloseMovie();
+		}
+		exit(0);
+	}
 
 	m_pMainWnd->Show(true);
 
@@ -512,5 +533,11 @@ bool CVideoSubFinderApp::OnInit()
 
 CVideoSubFinderApp::~CVideoSubFinderApp()
 {
+}
+
+void CVideoSubFinderApp::OnAssertFailure(const wxChar *file, int line, const wxChar *func, const wxChar *cond, const wxChar *msg)
+{
+	SaveToReportLog(wxString::Format(wxT("OnAssertFailure: %s:%d (%s): cond='%s', msg='%s'\n"), 
+		file ? file : wxT(""), line, func ? func : wxT(""), cond ? cond : wxT(""), msg ? msg : wxT("")));
 }
 

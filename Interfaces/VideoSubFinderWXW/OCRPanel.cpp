@@ -52,6 +52,40 @@ int  g_ocr_threads = 8;
 
 void GetFileNames(wxString dir_path, vector<wxString>& FileNamesVector);
 
+static bool ParseSubFileName(const wxString& Str, u64& bt, u64& et, wxString* p_start_id = nullptr)
+{
+	int h1 = 0, m1 = 0, s1 = 0, ms1 = 0;
+	int h2 = 0, m2 = 0, s2 = 0, ms2 = 0;
+	wxString s = Str;
+
+	int prefix_len = 0;
+	if (s.StartsWith(wxT("bot_")) || s.StartsWith(wxT("top_")))
+	{
+		prefix_len = 4;
+		s = s.Mid(4);
+	}
+
+	if (wxSscanf(s, wxT("%d_%d_%d_%d__%d_%d_%d_%d"), &h1, &m1, &s1, &ms1, &h2, &m2, &s2, &ms2) == 8)
+	{
+		bt = ((u64)h1 * 3600 + (u64)m1 * 60 + (u64)s1) * 1000 + ms1;
+		et = ((u64)h2 * 3600 + (u64)m2 * 60 + (u64)s2) * 1000 + ms2;
+		if (p_start_id)
+		{
+			int delim = s.Find(wxT("__"));
+			if (delim != wxNOT_FOUND)
+			{
+				*p_start_id = Str.Mid(0, prefix_len + delim);
+			}
+			else
+			{
+				*p_start_id = Str.Mid(0, prefix_len + 12);
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
 wxDEFINE_EVENT(UPDATE_CCTI_PROGRESS, wxThreadEvent);
 wxDEFINE_EVENT(THREAD_CCTI_END, wxCommandEvent);
 wxDEFINE_EVENT(THREAD_JOIN_TXT_IMAGES_END, wxCommandEvent);
@@ -476,7 +510,7 @@ void COCRPanel::RefreshData()
 
 void COCRPanel::OnBnClickedCreateEmptySub(wxCommandEvent& event)
 {
-	wxString Str, SubStr, hour1, hour2, min1, min2, sec1, sec2, msec1, msec2;
+	wxString Str, SubStr, sec1, msec1;
 	int i, j, k, sec, msec;
 	u64 bt, et, dt, mdt;
 	wxString str_int;
@@ -514,18 +548,10 @@ void COCRPanel::OnBnClickedCreateEmptySub(wxCommandEvent& event)
 	{
 		Str = FileNamesVector[k];
 
-		hour1 = Str.Mid(0,1);
-		min1 = Str.Mid(2,2);
-		sec1 = Str.Mid(5,2);
-		msec1 = Str.Mid(8,3);
-
-		hour2 = Str.Mid(13,1);
-		min2 = Str.Mid(15,2);
-		sec2 = Str.Mid(18,2);
-		msec2 = Str.Mid(21,3);
-
-		bt = (wxAtoi(hour1)*3600 + wxAtoi(min1)*60 + wxAtoi(sec1))*1000 + wxAtoi(msec1);
-		et = (wxAtoi(hour2)*3600 + wxAtoi(min2)*60 + wxAtoi(sec2))*1000 + wxAtoi(msec2);
+		if (!ParseSubFileName(Str, bt, et))
+		{
+			continue;
+		}
 
 		BT.push_back(bt);
 		ET.push_back(et);
@@ -633,7 +659,7 @@ void COCRPanel::OnBnClickedCreateSubFromTXTResults(wxCommandEvent& event)
 
 void COCRPanel::OnBnClickedCreateSubFromClearedTXTImages(wxCommandEvent& event)
 {
-	wxString Str, SubStr, Name, hour1, hour2, min1, min2, sec1, sec2, msec1, msec2;
+	wxString Str, SubStr, Name, sec1, msec1;
 	int i, j, k, kb, sec, msec;
 	wxString str_int;
 	u64 bt, et, dt, mdt;
@@ -676,10 +702,12 @@ void COCRPanel::OnBnClickedCreateSubFromClearedTXTImages(wxCommandEvent& event)
 
 		if (g_join_subs_and_correct_time)
 		{
-			while ((k < (int)FileNamesVector.size()) &&
-				(FileNamesVector[kb].Mid(0, 11) == FileNamesVector[k].Mid(0, 11))
-				)
+			wxString start_id_kb, start_id_k;
+			ParseSubFileName(FileNamesVector[kb], bt, et, &start_id_kb);
+			while (k < (int)FileNamesVector.size())
 			{
+				ParseSubFileName(FileNamesVector[k], bt, et, &start_id_k);
+				if (start_id_kb != start_id_k) break;
 				k++;
 			}
 		}
@@ -689,22 +717,11 @@ void COCRPanel::OnBnClickedCreateSubFromClearedTXTImages(wxCommandEvent& event)
 		}
 
 		Str = FileNamesVector[kb];
-
-		hour1 = Str.Mid(0,1);
-		min1 = Str.Mid(2,2);
-		sec1 = Str.Mid(5,2);
-		msec1 = Str.Mid(8,3);
-
-		hour2 = Str.Mid(13,1);
-		min2 = Str.Mid(15,2);
-		sec2 = Str.Mid(18,2);
-		msec2 = Str.Mid(21,3);
-
-		bt = (wxAtoi(hour1)*3600 + wxAtoi(min1)*60 + wxAtoi(sec1))*1000 + wxAtoi(msec1);
-		et = (wxAtoi(hour2)*3600 + wxAtoi(min2)*60 + wxAtoi(sec2))*1000 + wxAtoi(msec2);
-
-		BT.push_back(bt);
-		ET.push_back(et);
+		if (ParseSubFileName(Str, bt, et))
+		{
+			BT.push_back(bt);
+			ET.push_back(et);
+		}
 	}
 
 	if (g_join_subs_and_correct_time)
@@ -872,7 +889,7 @@ void COCRPanel::SaveSub(wxString srt_sub, wxString ass_sub)
 
 void COCRPanel::CreateSubFromJoinTXTResults(wxString join_txt_res_path)
 {
-	wxString Str, SubStr, Name, hour1, hour2, min1, min2, sec1, sec2, msec1, msec2;
+	wxString Str, SubStr, Name;
 	int i, j, k, kb, sec, msec, fn;
 	wxString str_int;
 	wxString filename, img_data_BaseName;
@@ -1020,10 +1037,12 @@ void COCRPanel::CreateSubFromJoinTXTResults(wxString join_txt_res_path)
 
 		if (g_join_subs_and_correct_time)
 		{
-			while ((k < fn) &&
-				((*pFileNamesVector)[kb].Mid(0, 11) == (*pFileNamesVector)[k].Mid(0, 11))
-				)
+			wxString start_id_kb, start_id_k;
+			ParseSubFileName((*pFileNamesVector)[kb], bt, et, &start_id_kb);
+			while (k < fn)
 			{
+				ParseSubFileName((*pFileNamesVector)[k], bt, et, &start_id_k);
+				if (start_id_kb != start_id_k) break;
 				sub_str += sub_strs[k] + wxT("\n");
 				k++;
 			}
@@ -1038,23 +1057,12 @@ void COCRPanel::CreateSubFromJoinTXTResults(wxString join_txt_res_path)
 		sub_str.Trim(false);
 
 		Str = (*pFileNamesVector)[kb];
-
-		hour1 = Str.Mid(0, 1);
-		min1 = Str.Mid(2, 2);
-		sec1 = Str.Mid(5, 2);
-		msec1 = Str.Mid(8, 3);
-
-		hour2 = Str.Mid(13, 1);
-		min2 = Str.Mid(15, 2);
-		sec2 = Str.Mid(18, 2);
-		msec2 = Str.Mid(21, 3);
-
-		bt = (wxAtoi(hour1) * 3600 + wxAtoi(min1) * 60 + wxAtoi(sec1)) * 1000 + wxAtoi(msec1);
-		et = (wxAtoi(hour2) * 3600 + wxAtoi(min2) * 60 + wxAtoi(sec2)) * 1000 + wxAtoi(msec2);
-
-		BT.push_back(bt);
-		ET.push_back(et);
-		TXTVector.push_back(sub_str);
+		if (ParseSubFileName(Str, bt, et))
+		{
+			BT.push_back(bt);
+			ET.push_back(et);
+			TXTVector.push_back(sub_str);
+		}
 	}
 
 	k = 0;
@@ -1164,7 +1172,7 @@ void COCRPanel::CreateSubFromJoinTXTResults(wxString join_txt_res_path)
 
 void COCRPanel::CreateSubFromTXTResults()
 {
-	wxString Str, Name, hour1, hour2, min1, min2, sec1, sec2, msec1, msec2;
+	wxString Str, Name;
 	int i, j, k, kb, sec, msec, max_mY_dif, max_mI_dif, max_mQ_dif, max_posY_dif;
 	int val1, val2, val3, val4, val5, val6, val7, val8;
 	wxString fname, image_name;
@@ -1212,29 +1220,24 @@ void COCRPanel::CreateSubFromTXTResults()
 		kb = k;
 
 		Str = FileNamesVector[kb];
-
-		hour1 = Str.Mid(0,1);
-		min1 = Str.Mid(2,2);
-		sec1 = Str.Mid(5,2);
-		msec1 = Str.Mid(8,3);
-
-		hour2 = Str.Mid(13,1);
-		min2 = Str.Mid(15,2);
-		sec2 = Str.Mid(18,2);
-		msec2 = Str.Mid(21,3);
-
-		bt = (wxAtoi(hour1)*3600 + wxAtoi(min1)*60 + wxAtoi(sec1))*1000 + wxAtoi(msec1);
-		et = (wxAtoi(hour2)*3600 + wxAtoi(min2)*60 + wxAtoi(sec2))*1000 + wxAtoi(msec2);
+		if (!ParseSubFileName(Str, bt, et))
+		{
+			k++;
+			continue;
+		}
 
 		BT.push_back(bt);
 		ET.push_back(et);
 
 		Str = "";
 		i = 0;
-		while( (k < (int)FileNamesVector.size()) &&
-			   (FileNamesVector[kb].Mid(0, 11) == FileNamesVector[k].Mid(0, 11))
-			 )
+		wxString start_id_kb, start_id_k;
+		ParseSubFileName(FileNamesVector[kb], bt, et, &start_id_kb);
+		while (k < (int)FileNamesVector.size())
 		{
+			ParseSubFileName(FileNamesVector[k], bt, et, &start_id_k);
+			if (start_id_kb != start_id_k) break;
+
 			Name = g_work_dir + wxT("/TXTResults/") + FileNamesVector[k];
 
 			wxFileInputStream ffin(Name);
@@ -1792,23 +1795,13 @@ void JoinImages()
 				dc.SetFont(font);
 				wxSize text_size;
 
-				wxString hour1, hour2, min1, min2, sec1, sec2, msec1, msec2;
 				u64 bt, et;
 
 				Str = file_name;
-
-				hour1 = Str.Mid(0, 1);
-				min1 = Str.Mid(2, 2);
-				sec1 = Str.Mid(5, 2);
-				msec1 = Str.Mid(8, 3);
-
-				hour2 = Str.Mid(13, 1);
-				min2 = Str.Mid(15, 2);
-				sec2 = Str.Mid(18, 2);
-				msec2 = Str.Mid(21, 3);
-
-				bt = (wxAtoi(hour1) * 3600 + wxAtoi(min1) * 60 + wxAtoi(sec1)) * 1000 + wxAtoi(msec1);
-				et = (wxAtoi(hour2) * 3600 + wxAtoi(min2) * 60 + wxAtoi(sec2)) * 1000 + wxAtoi(msec2);				
+				if (!ParseSubFileName(Str, bt, et))
+				{
+					continue;
+				}				
 
 				Str = g_cfg.m_ocr_join_images_split_line;
 
@@ -2489,8 +2482,6 @@ void CreateClearedTextImages()
 	int i, j, k, xmin, xmax, ymin, ymax, val;
 	
 	int w1, h1, w2, h2, YB1, YB2, bln;
-	wxString hour1, hour2, min1, min2, sec1, sec2, msec1, msec2;
-	u64 bt1, et1, bt2, et2;
 
 	int res;	
 

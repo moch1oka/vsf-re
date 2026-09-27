@@ -59,8 +59,11 @@ void AddTwoImages(simple_buffer<T> &Im1, simple_buffer<T> &Im2, int size);
 void ImBGRToNativeSize(simple_buffer<u8> &ImBGROrig, simple_buffer<u8> &ImBGRRes, int w, int h, int W, int H, int xmin, int xmax, int ymin, int ymax);
 
 wxString VideoTimeToStr(s64 pos);
+wxString FormatSubImageName(s64 bt, s64 et, int box_stage = -1);
 s64 GetVideoTime(wxString time);
 s64 GetVideoTime(int minute, int sec, int mili_sec);
+
+extern int g_box_search_stage;
 
 wxString GetFileName(wxString FilePath);
 wxString GetFileExtension(wxString FilePath);

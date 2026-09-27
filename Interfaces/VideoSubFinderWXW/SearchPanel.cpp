@@ -19,6 +19,7 @@
 #include <exception>
 #include <wx/sound.h>
 #include <wx/gbsizer.h>
+#include <wx/utils.h>
 
 int g_IsSearching = 0;
 int g_IsClose = 0;
@@ -29,6 +30,7 @@ BEGIN_EVENT_TABLE(CSearchPanel, wxPanel)
 	EVT_COMMAND(wxID_ANY, THREAD_SEARCH_SUBTITLES_END, CSearchPanel::ThreadSearchSubtitlesEnd)
 	EVT_BUTTON(ID_BTN_CLEAR, CSearchPanel::OnBnClickedClear)
 	EVT_BUTTON(ID_BTN_RUN, CSearchPanel::OnBnClickedRun)
+	EVT_BUTTON(ID_BTN_CLEAN_RGB, CSearchPanel::OnBnClickedCleanRGB)
 END_EVENT_TABLE()
 
 CSearchPanel::CSearchPanel(CSSOWnd* pParent)
@@ -46,7 +48,7 @@ void CSearchPanel::Init()
 {
 	SaveToReportLog("CSearchPanel::Init(): starting...\n");
 
-	wxRect rcP1, rcClP1, rcBT1, rcBTA1, rcBT2, rcBTA2, rcCBTwoBoxes, rcClear, rcRun;
+	wxRect rcP1, rcClP1, rcBT1, rcBTA1, rcBT2, rcBTA2, rcCBTwoBoxes, rcClear, rcRun, rcCleanRGB;
 
 	rcBT1.x = 20;
 	rcBT1.y = 20;
@@ -82,11 +84,16 @@ void CSearchPanel::Init()
 	rcRun.height = rcClear.height;
 	rcRun.x = rcBTA2.GetRight() - 8 - rcRun.width;	
 	rcRun.y = rcClear.y;
+
+	rcCleanRGB.x = rcClear.x;
+	rcCleanRGB.y = rcRun.GetBottom() + 8;
+	rcCleanRGB.width = rcRun.GetRight() - rcClear.x;
+	rcCleanRGB.height = 30;
 	
 	rcP1.x = 10;
 	rcP1.y = 10;
 	rcP1.width = rcBTA1.GetRight() + rcBT1.x;
-	rcP1.height = rcRun.GetBottom() + rcBT1.y;
+	rcP1.height = rcCleanRGB.GetBottom() + rcBT1.y;
 
 	SaveToReportLog("CSearchPanel::Init(): init m_pP1...\n");
 	m_pP1 = new wxPanel( this, wxID_ANY, rcP1.GetPosition(), rcP1.GetSize() );
@@ -141,6 +148,12 @@ void CSearchPanel::Init()
 		g_cfg.m_button_run_search_text, rcRun.GetPosition(), rcRun.GetSize() );
 	wxSize run_min_size = rcRun.GetSize();
 	m_pRun->SetMinSize(run_min_size);
+
+	SaveToReportLog("CSearchPanel::Init(): init m_pCleanRGB...\n");
+	m_pCleanRGB = new CButton( m_pP1, ID_BTN_CLEAN_RGB, g_cfg.m_main_buttons_colour, g_cfg.m_main_buttons_colour_focused, g_cfg.m_main_buttons_colour_selected, g_cfg.m_main_buttons_border_colour,
+		g_cfg.m_button_clean_rgb_images_text, rcCleanRGB.GetPosition(), rcCleanRGB.GetSize() );
+	wxSize clean_rgb_min_size = rcCleanRGB.GetSize();
+	m_pCleanRGB->SetMinSize(clean_rgb_min_size);
 		
 	m_plblBT1->SetBackgroundColour(g_cfg.m_main_labels_background_colour);
 	m_plblBT2->SetBackgroundColour(g_cfg.m_main_labels_background_colour);
@@ -153,6 +166,7 @@ void CSearchPanel::Init()
 	m_plblBTA2->SetFont(m_pMF->m_LBLFont);
 	m_pClear->SetFont(m_pMF->m_BTNFont);
 	m_pRun->SetFont(m_pMF->m_BTNFont);
+	m_pCleanRGB->SetFont(m_pMF->m_BTNFont);
 
 	m_plblBT1->SetTextColour(g_cfg.m_main_text_colour);
 	m_plblBT2->SetTextColour(g_cfg.m_main_text_colour);
@@ -160,6 +174,7 @@ void CSearchPanel::Init()
 	m_plblBTA2->SetTextColour(g_cfg.m_main_text_colour);
 	m_pClear->SetTextColour(g_cfg.m_main_text_colour);
 	m_pRun->SetTextColour(g_cfg.m_main_text_colour);
+	m_pCleanRGB->SetTextColour(g_cfg.m_main_text_colour);
 
 	// m_pP1 location sizer
 	{
@@ -190,6 +205,8 @@ void CSearchPanel::Init()
 		vert_box_sizer->Add(m_pCBTwoBoxes, 0, wxALIGN_CENTER, 0);
 		vert_box_sizer->AddSpacer(6);
 		vert_box_sizer->Add(grid_btns_sizer, 0, wxALIGN_CENTER, 0);
+		vert_box_sizer->AddSpacer(6);
+		vert_box_sizer->Add(m_pCleanRGB, 0, wxEXPAND | wxALIGN_CENTER, 0);
 
 		hor_box_sizer->Add(vert_box_sizer, 1, wxALIGN_CENTER);
 
@@ -206,6 +223,10 @@ void CSearchPanel::RefreshData()
 	{
 		m_pCBTwoBoxes->SetLabel(g_cfg.m_checkbox_two_video_boxes);
 		m_pCBTwoBoxes->RefreshData();
+	}
+	if (m_pCleanRGB)
+	{
+		m_pCleanRGB->SetLabel(g_cfg.m_button_clean_rgb_images_text);
 	}
 }
 
@@ -304,6 +325,7 @@ void CSearchPanel::OnBnClickedRun(wxCommandEvent& event)
 		if (m_pMF->m_pVideo->SetNullRender())
 		{
 			m_pClear->Disable();
+			if (m_pCleanRGB) m_pCleanRGB->Disable();
 			if (m_pCBTwoBoxes) m_pCBTwoBoxes->Disable();
 			m_plblBTA1->SetEditable(false);
 			m_plblBTA2->SetEditable(false);
@@ -340,6 +362,100 @@ void CSearchPanel::OnBnClickedClear(wxCommandEvent& event)
 	m_pMF->ClearDir(g_work_dir + "/TXTResults");
 	m_pMF->ClearDir(g_work_dir + "/TestImages/RGBImages");
 	m_pMF->ClearDir(g_work_dir + "/TestImages/TXTImages");
+}
+
+void CSearchPanel::OnBnClickedCleanRGB(wxCommandEvent& event)
+{
+	if (g_IsSearching == 1)
+	{
+		wxMessageBox("Search is currently running. Please wait for it to finish.", "VideoSubFinder", wxICON_WARNING);
+		return;
+	}
+
+	wxString script_path = g_app_dir + "/clean_rgb_images.py";
+	if (!wxFileExists(script_path))
+	{
+		script_path = "F:/VideoSubFinder/clean_rgb_images.py";
+	}
+
+	if (!wxFileExists(script_path))
+	{
+		wxMessageBox(wxString::Format("clean_rgb_images.py not found at:\n%s", script_path), "Error", wxICON_ERROR);
+		return;
+	}
+
+	wxString rgb_dir = g_work_dir + "/RGBImages";
+	if (!wxDirExists(rgb_dir))
+	{
+		wxMessageBox("RGBImages directory does not exist.", "Error", wxICON_ERROR);
+		return;
+	}
+
+	int choice = wxMessageBox(
+		"Do you want to clean garbage images from RGBImages?\n\n"
+		"Yes: Move garbage images to _trash (Recommended)\n"
+		"No: Delete garbage images permanently\n"
+		"Cancel: Abort",
+		"Clean RGB Images", wxYES_NO | wxCANCEL | wxICON_QUESTION);
+
+	if (choice == wxCANCEL)
+	{
+		return;
+	}
+
+	wxString action = (choice == wxYES) ? "move" : "delete";
+
+	m_pCleanRGB->Disable();
+	wxString cleaning_label = wxT("Cleaning...");
+	m_pCleanRGB->SetLabel(cleaning_label);
+	m_pCleanRGB->Update();
+	wxYield();
+
+	wxString python_cmd = "python";
+#ifdef WIN32
+	if (wxFileExists("C:/Program Files/Python312/python.exe"))
+	{
+		python_cmd = "\"C:/Program Files/Python312/python.exe\"";
+	}
+#endif
+
+	wxString cmd = wxString::Format("%s \"%s\" --dir \"%s\" --action %s", python_cmd, script_path, rgb_dir, action);
+
+	wxArrayString output, errors;
+	long exitCode = wxExecute(cmd, output, errors, wxEXEC_SYNC);
+
+	m_pCleanRGB->SetLabel(g_cfg.m_button_clean_rgb_images_text);
+	m_pCleanRGB->Enable();
+
+	wxString summary;
+	for (size_t i = 0; i < output.GetCount(); i++)
+	{
+		wxString line = output[i].Trim(true).Trim(false);
+		if (line.StartsWith("=") || line.StartsWith("Tong") || line.StartsWith("Anh") || line.StartsWith("Thoi") || line.StartsWith("Cac"))
+		{
+			summary += line + "\n";
+		}
+	}
+
+	if (summary.IsEmpty())
+	{
+		for (size_t i = 0; i < output.GetCount(); i++)
+		{
+			summary += output[i] + "\n";
+		}
+	}
+
+	if (exitCode == 0)
+	{
+		wxMessageBox(summary.IsEmpty() ? "Cleaning completed successfully!" : summary, "Clean RGB Images Finished", wxICON_INFORMATION);
+	}
+	else
+	{
+		wxString errMsg = wxString::Format("Error executing cleaner (exit code %ld):\n", exitCode);
+		for (size_t i = 0; i < errors.GetCount(); i++) errMsg += errors[i] + "\n";
+		if (!summary.IsEmpty()) errMsg += summary;
+		wxMessageBox(errMsg, "Clean RGB Images Error", wxICON_ERROR);
+	}
 }
 
 void ThreadSearchSubtitles()
@@ -441,6 +557,7 @@ void CSearchPanel::ThreadSearchSubtitlesEnd(wxCommandEvent& event)
 		}
 
 		m_pClear->Enable();
+		if (m_pCleanRGB) m_pCleanRGB->Enable();
 		if (m_pCBTwoBoxes) m_pCBTwoBoxes->Enable();
 		m_plblBTA1->SetEditable(true);
 		m_plblBTA2->SetEditable(true);

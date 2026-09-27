@@ -45,6 +45,7 @@ public:
 
 	CButton	*m_pClear;
 	CButton	*m_pRun;
+	CButton	*m_pCleanRGB;
 	
 	wxPanel		*m_pP1;
 
@@ -66,6 +67,7 @@ public:
 	//HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor);
 	void OnBnClickedRun(wxCommandEvent& event);
 	void OnBnClickedClear(wxCommandEvent& event);
+	void OnBnClickedCleanRGB(wxCommandEvent& event);
 	void OnCheckBoxTwoBoxes(wxCommandEvent& event);
 	void OnTimeTextEnter(wxCommandEvent& evt);
 	void ThreadSearchSubtitlesEnd(wxCommandEvent& event);

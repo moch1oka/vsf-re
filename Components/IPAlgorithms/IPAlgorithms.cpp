@@ -1,4 +1,4 @@
-﻿                              //IPAlgorithms.cpp//                                
+                              //IPAlgorithms.cpp//                                
 //////////////////////////////////////////////////////////////////////////////////
 //																				//
 // Author:  Simeon Kosnitsky													//
@@ -76,7 +76,7 @@ wxString  g_work_dir;
 wxString  g_app_dir;
 wxString  g_prev_data_path;
 
-wxString  g_im_save_format = ".jpeg";
+wxString  g_im_save_format = ".jpg";
 //wxString  g_im_save_format = ".bmp";
 
 double	g_mthr = 0.4;
@@ -8845,7 +8845,7 @@ void SaveBGRImage(simple_buffer<u8>& ImBGR, wxString name, int w, int h)
 
 	vector<int> compression_params;
 
-	if (g_im_save_format == ".jpeg")
+	if (g_im_save_format == ".jpeg" || g_im_save_format == ".jpg")
 	{
 		compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 		compression_params.push_back(100);
@@ -8889,7 +8889,7 @@ void SaveGreyscaleImage(simple_buffer<u8>& Im, wxString name, int w, int h, int 
 
 	vector<int> compression_params;
 
-	if (g_im_save_format == ".jpeg")
+	if (g_im_save_format == ".jpeg" || g_im_save_format == ".jpg")
 	{
 		compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 		compression_params.push_back(100);

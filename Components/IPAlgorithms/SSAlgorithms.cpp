@@ -38,6 +38,7 @@ __itt_string_handle* shSubFound = __itt_string_handle_create(L"SubFound");
 
 std::chrono::time_point<std::chrono::high_resolution_clock> g_StartTimeRunSubSearch = std::chrono::high_resolution_clock::now();
 int		g_RunSubSearch = 0;
+int		g_box_search_stage = 0;
 
 int    g_threads = -1;
 
@@ -1616,7 +1617,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 									SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFSP [(bln(GetIntersectImages) > 0) && bf != -2 && bln(CompareTwoSubsOptimal(ImIntS..pImInt)) == 0 && finded_prev == 1 &&  cmp_prev(CompareTwoSubsOptimal(ImIntSP..ImIntS)) == 0 && AnalizeImageForSubPresence(ImIntSP) == 1]\n", (int)__LINE__, fn));
 #endif
 
-									Str = VideoTimeToStr(pbt) + wxT("__") + VideoTimeToStr(pet) + wxT("_") + FormatImInfoAddData(W, H, xmin, ymin, w, h);
+									Str = FormatSubImageName(pbt, pet);
 									rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 								}
 
@@ -1879,7 +1880,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 							SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFSP pbt:(%lld) pet:(%lld) [(((bln(GetIntersectImages) == 0) && (CurPos(%lld) != prevPos(%lld))) || ((bln(GetIntersectImages) == 1) && (CurPos(%lld) == prevPos(%lld)))) && finded_prev == 1 && (bf(%d) != pbf(%d))) && AnalizeImageForSubPresence(ImIntSP) == 1]\n", (int)__LINE__, fn, pbt, pet, CurPos, prevPos, CurPos, prevPos));
 #endif
 
-							Str = VideoTimeToStr(pbt) + wxT("__") + VideoTimeToStr(pet) + wxT("_") + FormatImInfoAddData(W, H, xmin, ymin, w, h);
+							Str = FormatSubImageName(pbt, pet);
 							rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 						}
 					}
@@ -1908,7 +1909,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 								SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFS [(((bln(GetIntersectImages) == 0) && (CurPos(%lld) != prevPos(%lld))) || ((bln(GetIntersectImages) == 1) && (CurPos(%lld) == prevPos(%lld)))) && bf != -2 && ef(%d) - bf(%d) + 1 >= DL(%d) && bf != pbf && AnalizeImageForSubPresence(ImIntS) == 1]\n", (int)__LINE__, fn, CurPos, prevPos, CurPos, prevPos, ef, bf, DL));
 #endif
 
-								Str = VideoTimeToStr(bt) + wxT("__") + VideoTimeToStr(et) + wxT("_") + FormatImInfoAddData(W, H, xmin, ymin, w, h);
+								Str = FormatSubImageName(bt, et);
 								rs.AddSaveImagesTask(ImFS, ImIntS, ImYS, Str);
 							}
 						}
@@ -1934,7 +1935,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 								SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFSP [(((bln(GetIntersectImages) == 0) && (CurPos(%lld) != prevPos(%lld))) || ((bln(GetIntersectImages) == 1) && (CurPos(%lld) == prevPos(%lld)))) && bf != -2 && ef(%d) - bf(%d) + 1 >= DL(%d) && bf == pbf && AnalizeImageForSubPresence(ImIntSP) == 1]\n", (int)__LINE__, fn, CurPos, prevPos, CurPos, prevPos, ef, bf, DL));
 #endif
 
-								Str = VideoTimeToStr(bt) + wxT("__") + VideoTimeToStr(et) + wxT("_") + FormatImInfoAddData(W, H, xmin, ymin, w, h);
+								Str = FormatSubImageName(bt, et);
 								rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 							}
 						}
@@ -1989,7 +1990,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 			SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): finded_prev == 1 saving: ImFSP\n", (int)__LINE__, fn));
 #endif
 
-			Str = VideoTimeToStr(pbt) + wxT("__") + VideoTimeToStr(pet) + wxT("_") + FormatImInfoAddData(W, H, xmin, ymin, w, h);
+			Str = FormatSubImageName(pbt, pet);
 			rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 		}
 	}
@@ -2827,9 +2828,16 @@ wxString VideoTimeToStr(s64 pos)
 	val -= min * 60;
 	sec = val;
 
-	str.Printf(wxT("%d_%02d_%02d_%03d"), hour, min, sec, msec);
+	str.Printf(wxT("%02d_%02d_%02d_%03d"), hour, min, sec, msec);
 
 	return str;
+}
+
+wxString FormatSubImageName(s64 bt, s64 et, int box_stage)
+{
+	int stage = (box_stage >= 0) ? box_stage : g_box_search_stage;
+	wxString prefix = (stage == 2) ? wxT("top_") : wxT("bot_");
+	return prefix + VideoTimeToStr(bt) + wxT("__") + VideoTimeToStr(et);
 }
 
 s64 GetVideoTime(wxString time)

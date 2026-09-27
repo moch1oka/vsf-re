@@ -30,7 +30,6 @@ CMainFrame *g_pMF;
 bool g_playback_sound = false;
 Settings g_cfg;
 bool g_use_two_video_boxes = false;
-int g_box_search_stage = 0;
 std::map<wxString, wxString> g_general_settings;
 std::map<wxString, wxString> g_locale_settings;
 

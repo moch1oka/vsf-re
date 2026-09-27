@@ -111,6 +111,7 @@
 
 #define ID_LBL_END_TIME                 1283
 #define ID_CB_TWO_BOXES                 1284
+#define ID_BTN_CLEAN_RGB                1285
 
 
 ///////////////////////////////////////////////////////////

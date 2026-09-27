@@ -16,10 +16,50 @@
 
 #include "FFMPEGVideo.h"
 #include "IPAlgorithms.h"
+#include <vector>
+#include <algorithm>
 
 #ifdef USE_CUDA
 #include "cuda_kernels.h"
 #endif
+
+struct SwsCache {
+	SwsContext* ctx = nullptr;
+	int src_w = 0;
+	int src_h = 0;
+	int dst_w = 0;
+	int dst_h = 0;
+	AVPixelFormat src_fmt = AV_PIX_FMT_NONE;
+	AVPixelFormat dst_fmt = AV_PIX_FMT_NONE;
+
+	~SwsCache() {
+		if (ctx) {
+			sws_freeContext(ctx);
+			ctx = nullptr;
+		}
+	}
+
+	SwsContext* get(int sw, int sh, AVPixelFormat sfmt, int dw, int dh, AVPixelFormat dfmt) {
+		if (!ctx || src_w != sw || src_h != sh || src_fmt != sfmt || dst_w != dw || dst_h != dh || dst_fmt != dfmt) {
+			if (ctx) {
+				sws_freeContext(ctx);
+				ctx = nullptr;
+			}
+			ctx = sws_getContext(sw, sh, sfmt, dw, dh, dfmt, SWS_FAST_BILINEAR, NULL, NULL, NULL);
+			src_w = sw;
+			src_h = sh;
+			src_fmt = sfmt;
+			dst_w = dw;
+			dst_h = dh;
+			dst_fmt = dfmt;
+		}
+		return ctx;
+	}
+};
+
+static thread_local SwsCache tl_sws_cache;
+static thread_local std::vector<uint8_t> tl_crop_bgr;
+static thread_local std::vector<uint8_t> tl_full_frame;
 
 wxString g_hw_device = wxT("cpu");
 wxString g_filter_descr;
@@ -400,8 +440,12 @@ int FFMPEGVideo::init_filters()
 		goto end;
 	}
 
-	ret = av_opt_set_int_list(buffersink_ctx, "pix_fmts", pix_fmts,
-		AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+	ret = av_opt_set_bin(buffersink_ctx, "pixel_formats", (const uint8_t*)pix_fmts,
+		sizeof(pix_fmts), AV_OPT_SEARCH_CHILDREN);
+	if (ret < 0) {
+		ret = av_opt_set_bin(buffersink_ctx, "pix_fmts", (const uint8_t*)pix_fmts,
+			sizeof(pix_fmts), AV_OPT_SEARCH_CHILDREN);
+	}
 	if (ret < 0) {
 		av_log(NULL, AV_LOG_ERROR, "Cannot set output pixel format\n");
 		goto end;
@@ -982,26 +1026,19 @@ inline int FFMPEGVideo::convert_to_dst_format(u8* frame_data, uint8_t* const dst
 		}
 		else
 		{
-			// convert to destination format
-
-			SwsContext* sws_ctx = sws_getContext(
+			// convert to destination format using cached SwsContext
+			SwsContext* sws_ctx = tl_sws_cache.get(
 				m_origWidth,
 				m_origHeight,
 				src_fmt,
 				m_Width,
 				m_Height,
-				dest_fmt,
-				SWS_BILINEAR,
-				NULL,
-				NULL,
-				NULL
+				dest_fmt
 			);			
-
 
 			if (sws_ctx)
 			{
 				ret = sws_scale(sws_ctx, src_data, src_linesize, 0, m_origHeight, dst_data, dst_linesize);
-				sws_freeContext(sws_ctx);
 			}
 		}
 	}
@@ -1013,36 +1050,91 @@ inline int FFMPEGVideo::convert_to_dst_format(u8* frame_data, uint8_t* const dst
 
 int FFMPEGVideo::ConvertToBGR(u8* frame_data, simple_buffer<u8>& ImBGR, int xmin, int xmax, int ymin, int ymax)
 {
-	int ret;
-	AVPixelFormat dest_fmt = AV_PIX_FMT_BGR24;
-	uint8_t* dst_data[4] = { NULL };
-	int dst_linesize[4];
+	int w = xmax - xmin + 1;
+	int h = ymax - ymin + 1;
 
-	/* buffer is going to be written to rawvideo file, no alignment */
-	if ((ret = av_image_alloc(dst_data, dst_linesize,
-		m_Width, m_Height, dest_fmt, 1)) < 0) {
-		custom_assert(ret > 0, "FFMPEGVideo::ConvertToBGR\nCould not allocate memory for destination image.");
+	custom_assert(ImBGR.m_size >= w * h * 3, "FFMPEGVideo::ConvertToBGR not: ImBGR.m_size >= w * h * 3");
+
+	uint8_t* src_data[4] = { NULL };
+	int src_linesize[4] = { 0 };
+
+	int ret = av_image_fill_arrays(src_data, src_linesize, frame_data, src_fmt, m_origWidth, m_origHeight, 1);
+	if (ret < 0) return ret;
+
+	// Fast path for NV12 when frame is not downscaled (e.g. AMD D3D11VA hardware decode)
+	if ((src_fmt == AV_PIX_FMT_NV12) && (m_origWidth == m_Width) && (m_origHeight == m_Height) && !g_use_cuda_gpu)
+	{
+		int cl_xmin = (xmin < 0) ? 0 : ((xmin >= m_Width) ? m_Width - 1 : xmin);
+		int cl_xmax = (xmax < 0) ? 0 : ((xmax >= m_Width) ? m_Width - 1 : xmax);
+		int cl_ymin = (ymin < 0) ? 0 : ((ymin >= m_Height) ? m_Height - 1 : ymin);
+		int cl_ymax = (ymax < 0) ? 0 : ((ymax >= m_Height) ? m_Height - 1 : ymax);
+
+		int crop_xmin = cl_xmin & ~1;
+		int crop_ymin = cl_ymin & ~1;
+		int crop_xmax = cl_xmax | 1;
+		if (crop_xmax >= m_Width) crop_xmax = m_Width - 1;
+		int crop_ymax = cl_ymax | 1;
+		if (crop_ymax >= m_Height) crop_ymax = m_Height - 1;
+		int crop_w = crop_xmax - crop_xmin + 1;
+		int crop_h = crop_ymax - crop_ymin + 1;
+
+		uint8_t* crop_src_data[4] = {
+			src_data[0] + crop_ymin * src_linesize[0] + crop_xmin,
+			src_data[1] + (crop_ymin / 2) * src_linesize[1] + crop_xmin,
+			NULL,
+			NULL
+		};
+		int crop_src_linesize[4] = { src_linesize[0], src_linesize[1], 0, 0 };
+
+		if ((crop_xmin == xmin) && (crop_ymin == ymin) && (crop_w == w) && (crop_h == h))
+		{
+			// Direct conversion directly into ImBGR without intermediate buffer
+			uint8_t* dst_data[4] = { ImBGR.m_pData, NULL, NULL, NULL };
+			int dst_linesize[4] = { w * 3, 0, 0, 0 };
+
+			SwsContext* sws = tl_sws_cache.get(w, h, AV_PIX_FMT_NV12, w, h, AV_PIX_FMT_BGR24);
+			if (sws)
+			{
+				ret = sws_scale(sws, crop_src_data, crop_src_linesize, 0, h, dst_data, dst_linesize);
+			}
+		}
+		else
+		{
+			// Boundary/odd coordinate alignment: convert to small thread-local buffer then copy exact ROI
+			tl_crop_bgr.resize(crop_w * crop_h * 3);
+			uint8_t* dst_data[4] = { tl_crop_bgr.data(), NULL, NULL, NULL };
+			int dst_linesize[4] = { crop_w * 3, 0, 0, 0 };
+
+			SwsContext* sws = tl_sws_cache.get(crop_w, crop_h, AV_PIX_FMT_NV12, crop_w, crop_h, AV_PIX_FMT_BGR24);
+			if (sws)
+			{
+				ret = sws_scale(sws, crop_src_data, crop_src_linesize, 0, crop_h, dst_data, dst_linesize);
+			}
+
+			int off_x = xmin - crop_xmin;
+			int off_y = ymin - crop_ymin;
+			for (int y = 0; y < h; y++)
+			{
+				memcpy(ImBGR.m_pData + y * w * 3, tl_crop_bgr.data() + ((y + off_y) * crop_w + off_x) * 3, w * 3);
+			}
+		}
+
+		UpdateImageColor(ImBGR, w, h);
+		return 1;
 	}
+
+	// Fallback path: reusable thread_local buffer for full frame, no per-frame heap allocation
+	tl_full_frame.resize(m_Width * m_Height * 3);
+	uint8_t* dst_data[4] = { tl_full_frame.data(), NULL, NULL, NULL };
+	int dst_linesize[4] = { m_Width * 3, 0, 0, 0 };
+
+	ret = convert_to_dst_format(frame_data, dst_data, dst_linesize, AV_PIX_FMT_BGR24);
 
 	if (ret > 0)
 	{
-		ret = convert_to_dst_format(frame_data, dst_data, dst_linesize, dest_fmt);
-	}
-
-	if (ret > 0)
-	{
-		int w, h, x, y, i, j, di;		
-
-		w = xmax - xmin + 1;
-		h = ymax - ymin + 1;
-
-		di = m_Width - w;
-
+		int y, i, j;
 		i = ymin * m_Width + xmin;
 		j = 0;
-
-		custom_assert(ImBGR.m_size >= w * h * 3, "FFMPEGVideo::ConvertToBGR not: ImBGR.m_size >= w * h * 3");
-
 
 		if (w == m_Width)
 		{
@@ -1060,8 +1152,6 @@ int FFMPEGVideo::ConvertToBGR(u8* frame_data, simple_buffer<u8>& ImBGR, int xmin
 
 		UpdateImageColor(ImBGR, w, h);
 	}
-
-	if (dst_data[0]) av_freep(&dst_data[0]);
 
 	return ret;
 }

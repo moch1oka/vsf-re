@@ -30,6 +30,7 @@ public:
 public:
 	virtual bool OnInit();
 	virtual bool Initialize(int& argc, wxChar **argv);
+	virtual void OnAssertFailure(const wxChar *file, int line, const wxChar *func, const wxChar *cond, const wxChar *msg);
 };
 
 IMPLEMENT_APP(CVideoSubFinderApp)

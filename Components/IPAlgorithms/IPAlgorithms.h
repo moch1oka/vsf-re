@@ -284,7 +284,7 @@ void SaveBinaryImage(simple_buffer<T>& Im, wxString name, int w, int h, int qual
 
 	vector<int> compression_params;
 
-	if (g_im_save_format == ".jpeg")
+	if (g_im_save_format == ".jpeg" || g_im_save_format == ".jpg")
 	{
 		compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 		compression_params.push_back(100);

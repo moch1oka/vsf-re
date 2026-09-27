@@ -1,6 +1,19 @@
 # Ignore Everything
 *
 
+# Or directories
+!*/
+
+# Re-ignore specific build and release directories
+build/
+Build/
+Release_AMD/
+vsf-modern/target/
+.vs/
+x64/
+Release/
+Debug/
+
 # But not:
 !*.cpp
 !*.c
@@ -22,6 +35,8 @@
 !*.ico
 !CMakeLists.txt
 !LICENSE
-# Or directories
-!*/
+!*.rs
+!*.toml
+!Cargo.lock
+!*.py
 
