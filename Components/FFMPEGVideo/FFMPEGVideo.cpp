@@ -473,12 +473,13 @@ int FFMPEGVideo::init_filters()
 		goto end;
 	}
 
-	// FFmpeg >= 7.1: "pixel_formats" array option; older versions: deprecated binary "pix_fmts" list
-	// (av_opt_set_int_list excludes the AV_PIX_FMT_NONE terminator from the list)
+	// FFmpeg >= 7.1: "pixel_formats" array option; older versions: deprecated binary "pix_fmts" list.
+	// av_opt_set_int_list() macro was removed from newer FFmpeg, so set the binary list directly,
+	// without the AV_PIX_FMT_NONE terminator (as the macro did).
 	ret = av_opt_set(buffersink_ctx, "pixel_formats", av_get_pix_fmt_name(dest_fmt), AV_OPT_SEARCH_CHILDREN);
 	if (ret < 0) {
-		ret = av_opt_set_int_list(buffersink_ctx, "pix_fmts", pix_fmts,
-			AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+		ret = av_opt_set_bin(buffersink_ctx, "pix_fmts", (const uint8_t*)pix_fmts,
+			sizeof(pix_fmts) - sizeof(pix_fmts[0]), AV_OPT_SEARCH_CHILDREN);
 	}
 	if (ret < 0) {
 		av_log(NULL, AV_LOG_ERROR, "Cannot set output pixel format\n");
