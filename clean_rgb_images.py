@@ -4,27 +4,40 @@ sử dụng mô hình Text Detection (DBNet) siêu nhẹ từ RapidOCR.
 """
 
 import argparse
-import glob
 import os
 import shutil
 import sys
 import time
 import cv2
+import numpy as np
 from rapidocr_onnxruntime import RapidOCR
 from tqdm import tqdm
+
+
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
+
+
+def read_image(path):
+    # cv2.imread() can't open non-ASCII paths on Windows
+    data = np.fromfile(path, dtype=np.uint8)
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
 def filter_images(img_dir, action="move", trash_dir=None, min_box_area=500, min_w=35, min_h=14, min_score=0.50, min_small_score=0.56, strict=False):
     if not os.path.isdir(img_dir):
         print(f"Error: Thu muc '{img_dir}' khong ton tai.")
-        return
+        return False
 
-    pattern = os.path.join(img_dir, "*.jpg")
-    files = glob.glob(pattern)
+    files = sorted(
+        os.path.join(img_dir, name) for name in os.listdir(img_dir)
+        if name.lower().endswith(IMAGE_EXTS) and os.path.isfile(os.path.join(img_dir, name))
+    )
     total_files = len(files)
     if total_files == 0:
-        print(f"Khong tim thay anh .jpg nao trong '{img_dir}'.")
-        return
+        print(f"Khong tim thay anh nao trong '{img_dir}'.")
+        return True
 
     if trash_dir is None:
         trash_dir = os.path.join(img_dir, "_trash")
@@ -60,7 +73,7 @@ def filter_images(img_dir, action="move", trash_dir=None, min_box_area=500, min_
     print(f"ONNX Runtime Execution Providers: {actual_providers}")
 
     # Warmup
-    dummy = cv2.imread(files[0])
+    dummy = read_image(files[0])
     if dummy is not None:
         dummy_shape = dummy.shape[:2]
         dummy_prep = engine.text_det.get_preprocess(max(dummy_shape))
@@ -78,8 +91,9 @@ def filter_images(img_dir, action="move", trash_dir=None, min_box_area=500, min_
     pbar = tqdm(files, desc="Loc anh phu de", unit="anh") if is_tty else files
 
     for file_path in pbar:
-        img = cv2.imread(file_path)
+        img = read_image(file_path)
         if img is None:
+            print(f"Warning: khong doc duoc anh '{file_path}', bo qua.")
             continue
 
         ori_shape = img.shape[:2]
@@ -139,11 +153,12 @@ def filter_images(img_dir, action="move", trash_dir=None, min_box_area=500, min_
     elif action == "delete":
         print(f"Cac anh rac da duoc xoa vinh vien.")
     print("=" * 50)
+    return True
 
 
 def main():
     parser = argparse.ArgumentParser(description="Don anh rac khong co chu trong RGBImages cua VideoSubFinder")
-    parser.add_argument("--dir", default=r"F:\VideoSubFinder\Release_AMD\VideoSubFinder\RGBImages",
+    parser.add_argument("--dir", default="RGBImages",
                         help="Duong dan den thu muc RGBImages")
     parser.add_argument("--action", choices=["move", "delete"], default="move",
                         help="'move' de chuyen vao thu muc _trash, 'delete' de xoa han (mac dinh: move)")
@@ -159,7 +174,7 @@ def main():
                         help="Bat che do siet chat nang cao de loai bo them cac vat the canh vat")
     args = parser.parse_args()
 
-    filter_images(
+    ok = filter_images(
         args.dir,
         action=args.action,
         trash_dir=args.trash_dir,
@@ -168,6 +183,7 @@ def main():
         min_h=args.min_h,
         strict=args.strict,
     )
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

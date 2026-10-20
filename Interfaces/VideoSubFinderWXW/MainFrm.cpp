@@ -2087,15 +2087,15 @@ void CMainFrame::OnTimer(wxTimerEvent& event)
 				{
 					if (g_box_search_stage == 1)
 					{
-						g_cfg.m_run_search_str_progress = wxT("[1/2] %%N/A");
+						g_cfg.m_run_search_str_progress = wxT("[1/2] %N/A");
 					}
 					else if (g_box_search_stage == 2)
 					{
-						g_cfg.m_run_search_str_progress = wxT("[2/2] %%N/A");
+						g_cfg.m_run_search_str_progress = wxT("[2/2] %N/A");
 					}
 					else
 					{
-						g_cfg.m_run_search_str_progress = wxT("%%N/A");
+						g_cfg.m_run_search_str_progress = wxT("%N/A");
 					}
 					g_cfg.m_run_search_str_eta = wxT("N/A");
 				}
@@ -2317,10 +2317,12 @@ void CMainFrame::ClearDir(wxString DirName)
 	wxString filename;
 	bool res;
 
-	res = dir.GetFirst(&filename);
+	if (!dir.IsOpened()) return;
+
+	res = dir.GetFirst(&filename, wxEmptyString, wxDIR_FILES | wxDIR_HIDDEN);
     while ( res )
     {
-        if ( (filename != wxT(".")) && 
+        if ( (filename != wxT(".")) &&
 			 (filename != wxT("..")) )
 		{
 			FileNamesVector.push_back(filename);

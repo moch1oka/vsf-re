@@ -104,6 +104,7 @@ public:
 
 	bool need_to_read_packet = true;
 	bool cuda_memory_is_initialized = false;
+	bool m_silent_open_errors = false;
 
 	AVPixelFormat src_fmt;
 
@@ -114,6 +115,8 @@ public:
 	void ShowFrame(void *dc = NULL);
 
 	bool OpenMovie(wxString csMovieName, void *pVideoWindow, int type);
+	bool OpenMovieImpl(wxString csMovieName, void *pVideoWindow, int type, const wxString& hw_device);
+	void ShowOpenMovieError(const wxString& msg);
 
 	bool SetVideoWindowPlacement(void *pVideoWindow);
 	bool SetNullRender();

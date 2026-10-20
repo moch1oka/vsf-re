@@ -71,19 +71,158 @@ static bool ParseSubFileName(const wxString& Str, u64& bt, u64& et, wxString* p_
 		et = ((u64)h2 * 3600 + (u64)m2 * 60 + (u64)s2) * 1000 + ms2;
 		if (p_start_id)
 		{
-			int delim = s.Find(wxT("__"));
-			if (delim != wxNOT_FOUND)
-			{
-				*p_start_id = Str.Mid(0, prefix_len + delim);
-			}
-			else
-			{
-				*p_start_id = Str.Mid(0, prefix_len + 12);
-			}
+			*p_start_id = Str.Mid(0, prefix_len + s.Find(wxT("__")));
 		}
 		return true;
 	}
+
+	if (p_start_id)
+	{
+		// unique id, so that unparsable names are never joined with neighbours
+		*p_start_id = wxT("?") + Str;
+	}
 	return false;
+}
+
+// Images from the top video box ("top_" prefix) form a separate subtitle track from the bottom ones
+static int GetSubTrack(const wxString& Str)
+{
+	return Str.StartsWith(wxT("top_")) ? 1 : 0;
+}
+
+// Sorts subtitle image/txt names by start time (then by name), so "bot_" and "top_" names
+// are interleaved chronologically; unparsable names go to the end.
+static void SortSubFileNames(vector<wxString>& FileNamesVector)
+{
+	struct SubFileItem
+	{
+		wxString name;
+		u64 bt;
+		bool parsed;
+	};
+
+	vector<SubFileItem> items;
+	items.reserve(FileNamesVector.size());
+
+	for (const wxString& name : FileNamesVector)
+	{
+		u64 bt = 0, et = 0;
+		bool parsed = ParseSubFileName(name, bt, et);
+		items.push_back({ name, bt, parsed });
+	}
+
+	std::sort(items.begin(), items.end(), [](const SubFileItem& a, const SubFileItem& b) {
+		if (a.parsed != b.parsed) return a.parsed;
+		if (a.parsed && (a.bt != b.bt)) return a.bt < b.bt;
+		return a.name < b.name;
+	});
+
+	for (size_t i = 0; i < items.size(); i++)
+	{
+		FileNamesVector[i] = items[i].name;
+	}
+}
+
+// Lists only regular files (skips sub dirs like "_trash" created by clean_rgb_images.py)
+static void ListDirFiles(const wxString& dir_path, vector<wxString>& FileNamesVector, const wxString& filespec = wxEmptyString)
+{
+	wxDir dir(dir_path);
+	wxString filename;
+
+	if (!dir.IsOpened()) return;
+
+	bool res = dir.GetFirst(&filename, filespec, wxDIR_FILES | wxDIR_HIDDEN);
+	while (res)
+	{
+		FileNamesVector.push_back(filename);
+		res = dir.GetNext(&filename);
+	}
+}
+
+// For each sub returns index of the next sub from the same track or -1
+static vector<int> GetNextSameTrackIds(const vector<int>& TR)
+{
+	vector<int> next(TR.size(), -1);
+	int last[2] = { -1, -1 };
+
+	for (int k = (int)TR.size() - 1; k >= 0; k--)
+	{
+		next[k] = last[TR[k]];
+		last[TR[k]] = k;
+	}
+
+	return next;
+}
+
+// Extends too short subs up to mdt, without overlapping next sub from the same track
+static void CorrectSubTimes(vector<u64>& BT, vector<u64>& ET, const vector<int>& TR, u64 mdt)
+{
+	vector<int> next = GetNextSameTrackIds(TR);
+
+	for (int k = 0; k < (int)BT.size(); k++)
+	{
+		int j = next[k];
+		if ((j < 0) || (ET[k] < BT[k])) continue;
+
+		if (ET[k] - BT[k] < mdt)
+		{
+			if (BT[k] + mdt < BT[j])
+			{
+				ET[k] = BT[k] + mdt;
+			}
+			else if (BT[j] > BT[k])
+			{
+				ET[k] = BT[j] - 1;
+			}
+		}
+	}
+}
+
+static void EraseSub(vector<u64>& BT, vector<u64>& ET, vector<wxString>& TXT, vector<int>& TR, int k)
+{
+	BT.erase(BT.begin() + k);
+	ET.erase(ET.begin() + k);
+	TXT.erase(TXT.begin() + k);
+	TR.erase(TR.begin() + k);
+}
+
+// Removes (or marks) unrecognized subs and joins neighbour subs from the same track with equal text
+static void RemoveUnrecognizedAndJoinEqualSubs(vector<u64>& BT, vector<u64>& ET, vector<wxString>& TXT, vector<int>& TR)
+{
+	int k = 0;
+	while (k < (int)TXT.size())
+	{
+		if (TXT[k].size() == 0)
+		{
+			if (g_DontDeleteUnrecognizedImages2 == false)
+			{
+				if (g_join_subs_and_correct_time)
+				{
+					EraseSub(BT, ET, TXT, TR, k);
+					continue;
+				}
+			}
+			else
+			{
+				TXT[k] = wxT("#unrecognized text#");
+			}
+		}
+
+		if (g_join_subs_and_correct_time)
+		{
+			int j = k + 1;
+			while ((j < (int)TXT.size()) && (TR[j] != TR[k])) j++;
+
+			if ((j < (int)TXT.size()) && ((s64)BT[j] - (s64)ET[k] <= 333) && (TXT[j] == TXT[k]))
+			{
+				ET[k] = std::max<u64>(ET[k], ET[j]);
+				EraseSub(BT, ET, TXT, TR, j);
+				continue;
+			}
+		}
+
+		k++;
+	}
 }
 
 wxDEFINE_EVENT(UPDATE_CCTI_PROGRESS, wxThreadEvent);
@@ -508,39 +647,43 @@ void COCRPanel::RefreshData()
 	m_pP3->SetBackgroundColour(g_cfg.m_notebook_panels_colour);
 }
 
+// Builds srt/ass subs with g_DefStringForEmptySub text,
+// "[sub_duration]" / "%sub_duration%" are replaced by sub duration in format "sec,msec"
+static void BuildEmptySubs(const vector<u64>& BT, const vector<u64>& ET, wxString& srt_sub, wxString& ass_sub)
+{
+	ass_sub << AssSubHead;
+
+	for (int k = 0; k < (int)BT.size(); k++)
+	{
+		u64 bt = BT[k];
+		u64 et = ET[k];
+		u64 dt = (et > bt) ? et - bt : 0;
+
+		wxString duration = wxString::Format(wxT("%d,%03d"), (int)(dt / 1000), (int)(dt % 1000));
+		wxString SubStr = g_DefStringForEmptySub;
+		SubStr.Replace("[sub_duration]", duration);
+		SubStr.Replace("%sub_duration%", duration);
+
+		srt_sub << (k + 1) << wxT("\n") << VideoTimeToStr2(bt) << " --> " << VideoTimeToStr2(et) << wxT("\n") << SubStr << "\n\n";
+		ass_sub << "Dialogue: 0," + VideoTimeToStr3(bt) + "," + VideoTimeToStr3(et) + ",Default,,0,0,0,," + SubStr + wxT("\n");
+	}
+}
+
 void COCRPanel::OnBnClickedCreateEmptySub(wxCommandEvent& event)
 {
-	wxString Str, SubStr, sec1, msec1;
-	int i, j, k, sec, msec;
-	u64 bt, et, dt, mdt;
-	wxString str_int;
+	wxString Str;
+	int k;
+	u64 bt, et, mdt;
 
-	wxDir dir(g_work_dir + "/RGBImages");
 	vector<wxString> FileNamesVector;
 	vector<u64> BT, ET;
-	wxString filename;
-	bool res;
+	vector<int> TR;
 
-	res = dir.GetFirst(&filename);
-    while ( res )
-    {
-		FileNamesVector.push_back(filename);
-
-        res = dir.GetNext(&filename);
-    }
+	ListDirFiles(g_work_dir + "/RGBImages", FileNamesVector);
 
 	if (FileNamesVector.size() == 0) return;
-	
-	for (i=0; i<(int)FileNamesVector.size()-1; i++)
-	for (j=i+1; j<(int)FileNamesVector.size(); j++)
-	{
-		if (FileNamesVector[i] > FileNamesVector[j])
-		{
-			Str = FileNamesVector[i];
-			FileNamesVector[i] = FileNamesVector[j];
-			FileNamesVector[j] = Str;
-		}
-	}	
+
+	SortSubFileNames(FileNamesVector);
 
 	mdt = (s64)(g_cfg.m_ocr_min_sub_duration * (double)1000);
 
@@ -555,91 +698,16 @@ void COCRPanel::OnBnClickedCreateEmptySub(wxCommandEvent& event)
 
 		BT.push_back(bt);
 		ET.push_back(et);
+		TR.push_back(GetSubTrack(Str));
 	}
 
 	if (g_join_subs_and_correct_time)
 	{
-		for (k = 0; k < (int)FileNamesVector.size() - 1; k++)
-		{
-			if (ET[k] - BT[k] < mdt)
-			{
-				if (BT[k] + mdt < BT[k + 1])
-				{
-					ET[k] = BT[k] + mdt;
-				}
-				else
-				{
-					ET[k] = BT[k + 1] - 1;
-				}
-			}
-		}
-	}	
-
-	wxString srt_sub;
-	for(k=0; k<(int)FileNamesVector.size(); k++)
-	{
-		bt = BT[k];
-		et = ET[k];
-
-		Str = VideoTimeToStr2(bt)+
-			  " --> "+
-			  VideoTimeToStr2(et);
-
-		dt = et - bt;
-		sec = (int)(dt/1000);
-		msec = (int)(dt%1000);
-		
-		sec1 = wxString::Format(wxT("%i"), sec);
-
-		str_int = wxString::Format(wxT("%i"), msec);
-		if (msec < 10) msec1 = wxT("00") + str_int;
-		else
-		{
-			if (msec < 100) msec1 = wxT("0")+ str_int;
-			else msec1 = str_int;
-		}
-
-		SubStr = g_DefStringForEmptySub;
-
-		if (g_DefStringForEmptySub.Contains("[sub_duration]"))
-		{			
-			SubStr.Replace("[sub_duration]", sec1 + "," + msec1);
-		}
-
-		srt_sub << (k+1) << wxT("\n") << Str << wxT("\n") << SubStr << "\n\n";
+		CorrectSubTimes(BT, ET, TR, mdt);
 	}
 
-	wxString ass_sub;
-	ass_sub << AssSubHead;
-	for (k = 0; k < (int)FileNamesVector.size(); k++)
-	{
-		bt = BT[k];
-		et = ET[k];
-
-		dt = et - bt;
-		sec = (int)(dt / 1000);
-		msec = (int)(dt % 1000);
-
-		sec1 = wxString::Format(wxT("%i"), sec);
-
-		str_int = wxString::Format(wxT("%i"), msec);
-		if (msec < 10) msec1 = wxT("00") + str_int;
-		else
-		{
-			if (msec < 100) msec1 = wxT("0") + str_int;
-			else msec1 = str_int;
-		}
-
-		SubStr = g_DefStringForEmptySub;
-
-		if (g_DefStringForEmptySub.Contains("%sub_duration%"))
-		{
-			SubStr.Replace("%sub_duration%", sec1 + "," + msec1);
-		}
-
-		ass_sub << "Dialogue: 0," + VideoTimeToStr3(bt) + "," + VideoTimeToStr3(et) + ",Default,,0,0,0,," + SubStr + wxT("\n");
-	}
-	
+	wxString srt_sub, ass_sub;
+	BuildEmptySubs(BT, ET, srt_sub, ass_sub);
 	SaveSub(srt_sub, ass_sub);
 }
 
@@ -659,38 +727,19 @@ void COCRPanel::OnBnClickedCreateSubFromTXTResults(wxCommandEvent& event)
 
 void COCRPanel::OnBnClickedCreateSubFromClearedTXTImages(wxCommandEvent& event)
 {
-	wxString Str, SubStr, Name, sec1, msec1;
-	int i, j, k, kb, sec, msec;
-	wxString str_int;
-	u64 bt, et, dt, mdt;
+	wxString Str;
+	int k, kb;
+	u64 bt, et, mdt;
 
-	wxString dir_path = wxString(g_work_dir + wxT("/TXTImages/"));
-	wxDir dir(dir_path);
 	vector<wxString> FileNamesVector;
 	vector<u64> BT, ET;
-	wxString filename;
-	bool res;
+	vector<int> TR;
 
-	res = dir.GetFirst(&filename);
-    while ( res )
-    {
-		FileNamesVector.push_back(filename);
-
-        res = dir.GetNext(&filename);
-    }
+	ListDirFiles(g_work_dir + wxT("/TXTImages/"), FileNamesVector);
 
 	if (FileNamesVector.size() == 0) return;
 
-	for (i=0; i<(int)FileNamesVector.size()-1; i++)
-	for (j=i+1; j<(int)FileNamesVector.size(); j++)
-	{
-		if (FileNamesVector[i] > FileNamesVector[j])
-		{
-			Str = FileNamesVector[i];
-			FileNamesVector[i] = FileNamesVector[j];
-			FileNamesVector[j] = Str;
-		}
-	}
+	SortSubFileNames(FileNamesVector);
 
 	mdt = (s64)(g_cfg.m_ocr_min_sub_duration * (double)1000);
 
@@ -698,7 +747,6 @@ void COCRPanel::OnBnClickedCreateSubFromClearedTXTImages(wxCommandEvent& event)
 	while (k < (int)FileNamesVector.size())
 	{
 		kb = k;
-		i = 0;
 
 		if (g_join_subs_and_correct_time)
 		{
@@ -721,92 +769,17 @@ void COCRPanel::OnBnClickedCreateSubFromClearedTXTImages(wxCommandEvent& event)
 		{
 			BT.push_back(bt);
 			ET.push_back(et);
+			TR.push_back(GetSubTrack(Str));
 		}
 	}
 
 	if (g_join_subs_and_correct_time)
 	{
-		for (k = 0; k < (int)BT.size() - 1; k++)
-		{
-			if (ET[k] - BT[k] < mdt)
-			{
-				if (BT[k] + mdt < BT[k + 1])
-				{
-					ET[k] = BT[k] + mdt;
-				}
-				else
-				{
-					ET[k] = BT[k + 1] - 1;
-				}
-			}
-		}
+		CorrectSubTimes(BT, ET, TR, mdt);
 	}
 
-	wxString srt_sub;
-	for(k=0; k<(int)BT.size(); k++)
-	{
-		bt = BT[k];
-		et = ET[k];
-
-		Str = VideoTimeToStr2(bt)+
-			  " --> "+
-			  VideoTimeToStr2(et);
-
-		dt = et - bt;
-		sec = (int)(dt/1000);
-		msec = (int)(dt%1000);
-		
-		sec1 = wxString::Format(wxT("%i"), sec);
-
-		str_int = wxString::Format(wxT("%i"), msec);
-		if (msec < 10) msec1 = wxT("00") + str_int;
-		else
-		{
-			if (msec < 100) msec1 = wxT("0") + str_int;
-			else msec1 = str_int;
-		}
-
-		SubStr = g_DefStringForEmptySub;
-
-		if (g_DefStringForEmptySub.Contains("%sub_duration%"))
-		{			
-			SubStr.Replace("%sub_duration%", sec1 + "," + msec1);
-		}
-
-		srt_sub << (k+1) << wxT("\n") << Str << wxT("\n") << SubStr << "\n\n";
-	}
-
-	wxString ass_sub;
-	ass_sub << AssSubHead;
-	for (k = 0; k < (int)BT.size(); k++)
-	{
-		bt = BT[k];
-		et = ET[k];
-
-		dt = et - bt;
-		sec = (int)(dt / 1000);
-		msec = (int)(dt % 1000);
-
-		sec1 = wxString::Format(wxT("%i"), sec);
-
-		str_int = wxString::Format(wxT("%i"), msec);
-		if (msec < 10) msec1 = wxT("00") + str_int;
-		else
-		{
-			if (msec < 100) msec1 = wxT("0") + str_int;
-			else msec1 = str_int;
-		}
-
-		SubStr = g_DefStringForEmptySub;
-
-		if (g_DefStringForEmptySub.Contains("%sub_duration%"))
-		{
-			SubStr.Replace("%sub_duration%", sec1 + "," + msec1);
-		}
-
-		ass_sub << "Dialogue: 0," + VideoTimeToStr3(bt) + "," + VideoTimeToStr3(et) + ",Default,,0,0,0,," + SubStr + wxT("\n");
-	}
-
+	wxString srt_sub, ass_sub;
+	BuildEmptySubs(BT, ET, srt_sub, ass_sub);
 	SaveSub(srt_sub, ass_sub);
 }
 
@@ -968,7 +941,8 @@ void COCRPanel::CreateSubFromJoinTXTResults(wxString join_txt_res_path)
 	}
 
 	vector<u64> BT, ET;
-	vector<wxString> TXTVector;	
+	vector<int> TR;
+	vector<wxString> TXTVector;
 
 	vector<wxString> sub_strs(fn);
 
@@ -1062,79 +1036,15 @@ void COCRPanel::CreateSubFromJoinTXTResults(wxString join_txt_res_path)
 			BT.push_back(bt);
 			ET.push_back(et);
 			TXTVector.push_back(sub_str);
+			TR.push_back(GetSubTrack(Str));
 		}
 	}
 
-	k = 0;
-	while (k < TXTVector.size())
-	{
-		if (TXTVector[k].size() == 0)
-		{
-			if (g_DontDeleteUnrecognizedImages2 == false)
-			{
-				if (g_join_subs_and_correct_time)
-				{
-					for (i = k; i < (int)TXTVector.size() - 1; i++)
-					{
-						BT[i] = BT[i + 1];
-						ET[i] = ET[i + 1];
-						TXTVector[i] = TXTVector[i + 1];
-					}
-					BT.pop_back();
-					ET.pop_back();
-					TXTVector.pop_back();
-
-					continue;
-				}
-			}
-			else
-			{
-				TXTVector[k] = wxT("#unrecognized text#");
-			}
-		}
-
-		if ((g_join_subs_and_correct_time) && (k < ((int)TXTVector.size() - 1)))
-		{
-			if (BT[k + 1] - ET[k] <= 333)
-			{
-				if (TXTVector[k + 1] == TXTVector[k])
-				{
-					ET[k] = ET[k + 1];
-
-					for (i = k + 1; i < (int)TXTVector.size() - 1; i++)
-					{
-						BT[i] = BT[i + 1];
-						ET[i] = ET[i + 1];
-						TXTVector[i] = TXTVector[i + 1];
-					}
-					BT.pop_back();
-					ET.pop_back();
-					TXTVector.pop_back();
-
-					continue;
-				}
-			}
-		}
-
-		k++;
-	}
+	RemoveUnrecognizedAndJoinEqualSubs(BT, ET, TXTVector, TR);
 
 	if (g_join_subs_and_correct_time)
 	{
-		for (k = 0; k < (int)TXTVector.size() - 1; k++)
-		{
-			if (ET[k] - BT[k] < mdt)
-			{
-				if (BT[k] + mdt < BT[k + 1])
-				{
-					ET[k] = BT[k] + mdt;
-				}
-				else
-				{
-					ET[k] = BT[k + 1] - 1;
-				}
-			}
-		}
+		CorrectSubTimes(BT, ET, TR, mdt);
 	}
 
 	wxString srt_sub;
@@ -1182,33 +1092,14 @@ void COCRPanel::CreateSubFromTXTResults()
 
 	vector<wxString> FileNamesVector;
 	vector<wxString> TXTVector;
-	vector<u64> BT, ET;	
+	vector<u64> BT, ET;
+	vector<int> TR;
 
-	wxString dir_path = wxString(g_work_dir + wxT("/TXTResults/"));
-	wxDir dir(dir_path);
-	wxString filename;
-	bool res;
-
-	res = dir.GetFirst(&filename, "*.txt");
-    while ( res )
-    {
-		FileNamesVector.push_back(filename);
-
-        res = dir.GetNext(&filename);
-    }
+	ListDirFiles(g_work_dir + wxT("/TXTResults/"), FileNamesVector, "*.txt");
 
 	if (FileNamesVector.size() == 0) return;
 
-	for (i=0; i<(int)FileNamesVector.size()-1; i++)
-	for (j=i+1; j<(int)FileNamesVector.size(); j++)
-	{
-		if (FileNamesVector[i] > FileNamesVector[j])
-		{
-			Str = FileNamesVector[i];
-			FileNamesVector[i] = FileNamesVector[j];
-			FileNamesVector[j] = Str;
-		}
-	}
+	SortSubFileNames(FileNamesVector);
 
 	mdt = (s64)(g_cfg.m_ocr_min_sub_duration * (double)1000);
 	
@@ -1228,6 +1119,7 @@ void COCRPanel::CreateSubFromTXTResults()
 
 		BT.push_back(bt);
 		ET.push_back(et);
+		TR.push_back(GetSubTrack(Str));
 
 		Str = "";
 		i = 0;
@@ -1283,76 +1175,11 @@ void COCRPanel::CreateSubFromTXTResults()
 		TXTVector.push_back(Str);
 	}
 
-	k=0;
-	while(k < TXTVector.size())
-	{
-		if (TXTVector[k].size() == 0)
-		{
-			if (g_DontDeleteUnrecognizedImages2 == false)
-			{
-				if (g_join_subs_and_correct_time)
-				{
-					for (i = k; i < (int)TXTVector.size() - 1; i++)
-					{
-						BT[i] = BT[i + 1];
-						ET[i] = ET[i + 1];
-						TXTVector[i] = TXTVector[i + 1];
-					}
-					BT.pop_back();
-					ET.pop_back();
-					TXTVector.pop_back();
-
-					continue;
-				}
-			}
-			else
-			{
-				TXTVector[k] = wxT("#unrecognized text#");
-			}
-		}
-
-		if ((g_join_subs_and_correct_time) && (k < ((int)TXTVector.size() - 1)))
-		{
-			if (BT[k + 1] - ET[k] <= 333)
-			{
-				if (TXTVector[k + 1] == TXTVector[k])
-				{
-					ET[k] = ET[k + 1];
-
-					for (i = k + 1; i < (int)TXTVector.size() - 1; i++)
-					{
-						BT[i] = BT[i + 1];
-						ET[i] = ET[i + 1];
-						TXTVector[i] = TXTVector[i + 1];
-					}
-					BT.pop_back();
-					ET.pop_back();
-					TXTVector.pop_back();
-
-					continue;
-				}
-			}
-		}
-
-		k++;
-	}
+	RemoveUnrecognizedAndJoinEqualSubs(BT, ET, TXTVector, TR);
 
 	if (g_join_subs_and_correct_time)
 	{
-		for (k = 0; k < (int)TXTVector.size() - 1; k++)
-		{
-			if (ET[k] - BT[k] < mdt)
-			{
-				if (BT[k] + mdt < BT[k + 1])
-				{
-					ET[k] = BT[k] + mdt;
-				}
-				else
-				{
-					ET[k] = BT[k + 1] - 1;
-				}
-			}
-		}
+		CorrectSubTimes(BT, ET, TR, mdt);
 	}
 
 	wxString srt_sub;
@@ -1452,31 +1279,8 @@ void COCRPanel::ThreadJoinTXTImagesThreadEnd(wxCommandEvent& event)
 
 void GetFileNames(wxString dir_path, vector<wxString>& FileNamesVector)
 {
-	wxDir dir(dir_path);
-	wxString file_name;
-	wxString Str;
-	bool res;
-
-	res = dir.GetFirst(&file_name);
-	while (res)
-	{
-		FileNamesVector.push_back(file_name);
-
-		res = dir.GetNext(&file_name);
-	}
-
-	for (int i = 0; i < (int)FileNamesVector.size() - 1; i++)
-	{
-		for (int j = i + 1; j < (int)FileNamesVector.size(); j++)
-		{
-			if (FileNamesVector[i] > FileNamesVector[j])
-			{
-				Str = FileNamesVector[i];
-				FileNamesVector[i] = FileNamesVector[j];
-				FileNamesVector[j] = Str;
-			}
-		}
-	}
+	ListDirFiles(dir_path, FileNamesVector);
+	SortSubFileNames(FileNamesVector);
 }
 
 void JoinImages()
@@ -1795,13 +1599,15 @@ void JoinImages()
 				dc.SetFont(font);
 				wxSize text_size;
 
-				u64 bt, et;
+				u64 bt = 0, et = 0;
 
+				// don't skip the image: its height is already counted in res_h and
+				// [sub_id] numbering must stay in sync with CreateSubFromJoinTXTResults()
 				Str = file_name;
 				if (!ParseSubFileName(Str, bt, et))
 				{
-					continue;
-				}				
+					SaveError(wxString::Format(wxT("ERROR: JoinImages(): can't get sub times from file name \"%s\"\n"), file_name));
+				}
 
 				Str = g_cfg.m_ocr_join_images_split_line;
 
@@ -2302,30 +2108,10 @@ void COCRPanel::OnBnClickedCreateClearedTextImages(wxCommandEvent& event)
 
 	if (g_IsCreateClearedTextImages == 0)
 	{
-		wxDir dir(g_work_dir + "/RGBImages");
 		vector<wxString> FileNamesVector;
-		wxString filename;
 		wxString Str;
-		bool bres;
 
-		bres = dir.GetFirst(&filename);
-		while (bres)
-		{
-			FileNamesVector.push_back(filename);
-
-			bres = dir.GetNext(&filename);
-		}
-
-		for (int i = 0; i < (int)FileNamesVector.size() - 1; i++)
-			for (int j = i + 1; j < (int)FileNamesVector.size(); j++)
-			{
-				if (FileNamesVector[i] > FileNamesVector[j])
-				{
-					Str = FileNamesVector[i];
-					FileNamesVector[i] = FileNamesVector[j];
-					FileNamesVector[j] = Str;
-				}
-			}
+		GetFileNames(g_work_dir + "/RGBImages", FileNamesVector);
 
 		int NImages = FileNamesVector.size();
 

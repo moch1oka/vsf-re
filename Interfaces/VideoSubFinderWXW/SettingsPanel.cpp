@@ -593,7 +593,7 @@ void CSettingsPanel::OnBnClickedTest(wxCommandEvent& event)
 		wxDir dir(g_work_dir + "/RGBImages");
 		wxString filename, ImgName;
 
-		if (dir.GetFirst(&filename))
+		if (dir.IsOpened() && dir.GetFirst(&filename, wxEmptyString, wxDIR_FILES))
 		{
 			m_pMF->m_pPanel->Disable();
 

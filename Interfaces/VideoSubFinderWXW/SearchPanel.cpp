@@ -20,6 +20,7 @@
 #include <wx/sound.h>
 #include <wx/gbsizer.h>
 #include <wx/utils.h>
+#include <wx/dir.h>
 
 int g_IsSearching = 0;
 int g_IsClose = 0;
@@ -354,6 +355,11 @@ void CSearchPanel::OnBnClickedRun(wxCommandEvent& event)
 void CSearchPanel::OnBnClickedClear(wxCommandEvent& event)
 {
 	m_pMF->ClearDir(g_work_dir + "/RGBImages");
+	if (wxDirExists(g_work_dir + "/RGBImages/_trash"))
+	{
+		// created by clean_rgb_images.py
+		wxDir::Remove(g_work_dir + "/RGBImages/_trash", wxPATH_RMDIR_RECURSIVE);
+	}
 	m_pMF->ClearDir(g_work_dir + "/ISAImages");
 	m_pMF->ClearDir(g_work_dir + "/ILAImages");
 	m_pMF->ClearDir(g_work_dir + "/TXTImages");
@@ -373,9 +379,9 @@ void CSearchPanel::OnBnClickedCleanRGB(wxCommandEvent& event)
 	}
 
 	wxString script_path = g_app_dir + "/clean_rgb_images.py";
-	if (!wxFileExists(script_path))
+	if (!wxFileExists(script_path) && wxFileExists(wxGetCwd() + "/clean_rgb_images.py"))
 	{
-		script_path = "F:/VideoSubFinder/clean_rgb_images.py";
+		script_path = wxGetCwd() + "/clean_rgb_images.py";
 	}
 
 	if (!wxFileExists(script_path))
@@ -411,13 +417,13 @@ void CSearchPanel::OnBnClickedCleanRGB(wxCommandEvent& event)
 	m_pCleanRGB->Update();
 	wxYield();
 
+	// VSF_PYTHON env var can point to a specific python interpreter, otherwise "python" from PATH is used
 	wxString python_cmd = "python";
-#ifdef WIN32
-	if (wxFileExists("C:/Program Files/Python312/python.exe"))
+	wxString python_env;
+	if (wxGetEnv("VSF_PYTHON", &python_env) && !python_env.IsEmpty())
 	{
-		python_cmd = "\"C:/Program Files/Python312/python.exe\"";
+		python_cmd = "\"" + python_env + "\"";
 	}
-#endif
 
 	wxString cmd = wxString::Format("%s \"%s\" --dir \"%s\" --action %s", python_cmd, script_path, rgb_dir, action);
 
@@ -475,7 +481,8 @@ void ThreadSearchSubtitles()
 			std::min<double>(g_pMF->m_pVideoBox->m_pVBox->m_pHSL1->m_pos, g_pMF->m_pVideoBox->m_pVBox->m_pHSL2->m_pos),
 			std::max<double>(g_pMF->m_pVideoBox->m_pVBox->m_pHSL1->m_pos, g_pMF->m_pVideoBox->m_pVBox->m_pHSL2->m_pos));
 
-		g_pMF->m_BegTime = FastSearchSubtitles(g_pMF->m_pVideo, origBegTime, endTime);
+		// m_BegTime is used by CMainFrame::OnTimer() as progress start, so it is updated only after all stages
+		s64 stopTime = FastSearchSubtitles(g_pMF->m_pVideo, origBegTime, endTime);
 
 		// Stage 2: Search Box 2 (Top Box) if enabled and not stopped
 		if ((g_RunSubSearch == 1) && g_use_two_video_boxes)
@@ -487,8 +494,10 @@ void ThreadSearchSubtitles()
 				std::min<double>(g_pMF->m_pVideoBox->m_pVBox->m_pHSL3->m_pos, g_pMF->m_pVideoBox->m_pVBox->m_pHSL4->m_pos),
 				std::max<double>(g_pMF->m_pVideoBox->m_pVBox->m_pHSL3->m_pos, g_pMF->m_pVideoBox->m_pVBox->m_pHSL4->m_pos));
 
-			FastSearchSubtitles(g_pMF->m_pVideo, origBegTime, endTime);
+			// stage 1 is already finished, so on stop the search should resume from stage 2 position
+			stopTime = FastSearchSubtitles(g_pMF->m_pVideo, origBegTime, endTime);
 		}
+		g_pMF->m_BegTime = stopTime;
 		g_box_search_stage = 0;
 	}
 	catch (const exception& e)

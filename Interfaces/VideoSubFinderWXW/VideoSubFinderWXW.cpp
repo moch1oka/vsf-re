@@ -266,7 +266,8 @@ bool CVideoSubFinderApp::OnInit()
 	SaveToReportLog("CMainFrame was created.\n");
 
 	wxString wxStr;
-	bool blnNeedToExit = false;	
+	bool blnNeedToExit = false;
+	int exit_code = 0;
 
 	SaveToReportLog("m_pMainWnd->Init...\n");
 	m_pMainWnd->Init();	
@@ -439,6 +440,11 @@ bool CVideoSubFinderApp::OnInit()
 					m_pMainWnd->m_pPanel->m_pSHPanel->m_SearchThread.join();
 				}
 			}
+			else
+			{
+				SaveToReportLog(wxT("ERROR: failed to open input video: ") + m_pMainWnd->m_FileName + wxT("\n"));
+				exit_code = 1;
+			}
 		}
 		else
 		{
@@ -523,7 +529,8 @@ bool CVideoSubFinderApp::OnInit()
 		{
 			m_pMainWnd->m_pVideo->CloseMovie();
 		}
-		exit(0);
+		// non zero exit code lets command line scripts detect failure
+		exit(exit_code);
 	}
 
 	m_pMainWnd->Show(true);

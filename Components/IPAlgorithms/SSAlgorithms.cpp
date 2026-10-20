@@ -1617,7 +1617,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 									SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFSP [(bln(GetIntersectImages) > 0) && bf != -2 && bln(CompareTwoSubsOptimal(ImIntS..pImInt)) == 0 && finded_prev == 1 &&  cmp_prev(CompareTwoSubsOptimal(ImIntSP..ImIntS)) == 0 && AnalizeImageForSubPresence(ImIntSP) == 1]\n", (int)__LINE__, fn));
 #endif
 
-									Str = FormatSubImageName(pbt, pet);
+									Str = FormatSubImageName(pbt, pet, W, H, xmin, ymin, w, h);
 									rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 								}
 
@@ -1880,7 +1880,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 							SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFSP pbt:(%lld) pet:(%lld) [(((bln(GetIntersectImages) == 0) && (CurPos(%lld) != prevPos(%lld))) || ((bln(GetIntersectImages) == 1) && (CurPos(%lld) == prevPos(%lld)))) && finded_prev == 1 && (bf(%d) != pbf(%d))) && AnalizeImageForSubPresence(ImIntSP) == 1]\n", (int)__LINE__, fn, pbt, pet, CurPos, prevPos, CurPos, prevPos));
 #endif
 
-							Str = FormatSubImageName(pbt, pet);
+							Str = FormatSubImageName(pbt, pet, W, H, xmin, ymin, w, h);
 							rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 						}
 					}
@@ -1909,7 +1909,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 								SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFS [(((bln(GetIntersectImages) == 0) && (CurPos(%lld) != prevPos(%lld))) || ((bln(GetIntersectImages) == 1) && (CurPos(%lld) == prevPos(%lld)))) && bf != -2 && ef(%d) - bf(%d) + 1 >= DL(%d) && bf != pbf && AnalizeImageForSubPresence(ImIntS) == 1]\n", (int)__LINE__, fn, CurPos, prevPos, CurPos, prevPos, ef, bf, DL));
 #endif
 
-								Str = FormatSubImageName(bt, et);
+								Str = FormatSubImageName(bt, et, W, H, xmin, ymin, w, h);
 								rs.AddSaveImagesTask(ImFS, ImIntS, ImYS, Str);
 							}
 						}
@@ -1935,7 +1935,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 								SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): saving: ImFSP [(((bln(GetIntersectImages) == 0) && (CurPos(%lld) != prevPos(%lld))) || ((bln(GetIntersectImages) == 1) && (CurPos(%lld) == prevPos(%lld)))) && bf != -2 && ef(%d) - bf(%d) + 1 >= DL(%d) && bf == pbf && AnalizeImageForSubPresence(ImIntSP) == 1]\n", (int)__LINE__, fn, CurPos, prevPos, CurPos, prevPos, ef, bf, DL));
 #endif
 
-								Str = FormatSubImageName(bt, et);
+								Str = FormatSubImageName(bt, et, W, H, xmin, ymin, w, h);
 								rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 							}
 						}
@@ -1990,7 +1990,7 @@ s64 FastSearchSubtitles(CVideo *pV, s64 Begin, s64 End)
 			SaveToReportLog(wxString::Format("FastSearchSubtitles [line: %d]: fn(%d): finded_prev == 1 saving: ImFSP\n", (int)__LINE__, fn));
 #endif
 
-			Str = FormatSubImageName(pbt, pet);
+			Str = FormatSubImageName(pbt, pet, W, H, xmin, ymin, w, h);
 			rs.AddSaveImagesTask(ImFSP, ImIntSP, ImYSP, Str);
 		}
 	}
@@ -2833,11 +2833,12 @@ wxString VideoTimeToStr(s64 pos)
 	return str;
 }
 
-wxString FormatSubImageName(s64 bt, s64 et, int box_stage)
+wxString FormatSubImageName(s64 bt, s64 et, int W, int H, int xmin, int ymin, int w, int h, int box_stage)
 {
 	int stage = (box_stage >= 0) ? box_stage : g_box_search_stage;
 	wxString prefix = (stage == 2) ? wxT("top_") : wxT("bot_");
-	return prefix + VideoTimeToStr(bt) + wxT("__") + VideoTimeToStr(et);
+	// keep image geometry suffix: it is decoded later by GetImInfo()/DecodeImData()
+	return prefix + VideoTimeToStr(bt) + wxT("__") + VideoTimeToStr(et) + wxT("_") + FormatImInfoAddData(W, H, xmin, ymin, w, h);
 }
 
 s64 GetVideoTime(wxString time)

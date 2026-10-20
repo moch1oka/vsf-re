@@ -45,7 +45,7 @@ struct SwsCache {
 				sws_freeContext(ctx);
 				ctx = nullptr;
 			}
-			ctx = sws_getContext(sw, sh, sfmt, dw, dh, dfmt, SWS_FAST_BILINEAR, NULL, NULL, NULL);
+			ctx = sws_getContext(sw, sh, sfmt, dw, dh, dfmt, SWS_BILINEAR, NULL, NULL, NULL);
 			src_w = sw;
 			src_h = sh;
 			src_fmt = sfmt;
@@ -57,7 +57,10 @@ struct SwsCache {
 	}
 };
 
+// separate caches: full frame conversion (any dest format) and NV12 crop conversion
+// have different parameters and would evict each other on every call with one shared entry
 static thread_local SwsCache tl_sws_cache;
+static thread_local SwsCache tl_sws_crop_cache;
 static thread_local std::vector<uint8_t> tl_crop_bgr;
 static thread_local std::vector<uint8_t> tl_full_frame;
 
@@ -205,13 +208,43 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelF
 	return AV_PIX_FMT_NONE;
 }
 
+void FFMPEGVideo::ShowOpenMovieError(const wxString& msg)
+{
+	if (!m_silent_open_errors)
+	{
+		wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+	}
+}
+
+bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device_type)
+{
+	if (g_hw_device == wxT("cpu"))
+	{
+		return OpenMovieImpl(csMovieName, pVideoWindow, device_type, g_hw_device);
+	}
+
+	// try HW acceleration without error dialogs, on failure (no such device/driver, unsupported codec, non Windows OS for d3d11va...)
+	// fall back to cpu decoding
+	m_silent_open_errors = true;
+	bool res = OpenMovieImpl(csMovieName, pVideoWindow, device_type, g_hw_device);
+	m_silent_open_errors = false;
+
+	if (!res)
+	{
+		SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): failed to open video with HW device \"%s\", falling back to cpu...\n"), g_hw_device));
+		res = OpenMovieImpl(csMovieName, pVideoWindow, device_type, wxT("cpu"));
+	}
+
+	return res;
+}
+
 int FFMPEGVideo::hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type)
 {
 	int err = 0;
 
 	if ((err = av_hwdevice_ctx_create(&hw_device_ctx, type,
 		NULL, NULL, 0)) < 0) {
-		wxMessageBox("Failed to create specified HW device.", "FFMPEGVideo::hw_decoder_init");
+		ShowOpenMovieError(wxT("Failed to create specified HW device."));
 		return err;
 	}
 	ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
@@ -259,7 +292,7 @@ int FFMPEGVideo::decode_frame(s64 &frame_pos)
 	if (g_use_filter)
 	{
 		/* push the decoded frame into the filtergraph */
-		if (ret = av_buffersrc_add_frame_flags(buffersrc_ctx, cur_frame, AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
+		if ((ret = av_buffersrc_add_frame_flags(buffersrc_ctx, cur_frame, AV_BUFFERSRC_FLAG_KEEP_REF)) < 0) {
 			av_frame_unref(cur_frame);
 			return ret;
 		}
@@ -440,11 +473,12 @@ int FFMPEGVideo::init_filters()
 		goto end;
 	}
 
-	ret = av_opt_set_bin(buffersink_ctx, "pixel_formats", (const uint8_t*)pix_fmts,
-		sizeof(pix_fmts), AV_OPT_SEARCH_CHILDREN);
+	// FFmpeg >= 7.1: "pixel_formats" array option; older versions: deprecated binary "pix_fmts" list
+	// (av_opt_set_int_list excludes the AV_PIX_FMT_NONE terminator from the list)
+	ret = av_opt_set(buffersink_ctx, "pixel_formats", av_get_pix_fmt_name(dest_fmt), AV_OPT_SEARCH_CHILDREN);
 	if (ret < 0) {
-		ret = av_opt_set_bin(buffersink_ctx, "pix_fmts", (const uint8_t*)pix_fmts,
-			sizeof(pix_fmts), AV_OPT_SEARCH_CHILDREN);
+		ret = av_opt_set_int_list(buffersink_ctx, "pix_fmts", pix_fmts,
+			AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
 	}
 	if (ret < 0) {
 		av_log(NULL, AV_LOG_ERROR, "Cannot set output pixel format\n");
@@ -492,7 +526,7 @@ end:
 	return ret;
 }
 
-bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device_type)
+bool FFMPEGVideo::OpenMovieImpl(wxString csMovieName, void *pVideoWindow, int device_type, const wxString& hw_device)
 {
 	bool res = false;
 	int ret;
@@ -515,7 +549,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 
 	SaveToReportLog(wxT("FFMPEGVideo::OpenMovie(): starting...\n"));
 
-	if (g_hw_device == wxT("cpu"))
+	if (hw_device == wxT("cpu"))
 	{	
 		SaveToReportLog(wxT("FFMPEGVideo::OpenMovie(): starting cpu device open...\n"));
 
@@ -524,7 +558,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if ((ret = avformat_open_input(&input_ctx, csMovieName.ToUTF8(), NULL, NULL)) < 0) {
 			wxString msg = wxT("Cannot open input file: ") + csMovieName;
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -533,7 +567,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if ((ret = avformat_find_stream_info(input_ctx, NULL)) < 0) {
 			wxString msg = wxT("Cannot find input stream information.");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -544,7 +578,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if (ret < 0) {
 			wxString msg = wxT("Cannot find a video stream in the input file.");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -556,7 +590,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		{
 			wxString msg = wxT("avcodec_alloc_context3 faled");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -568,7 +602,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		{
 			wxString msg = wxT("avcodec_parameters_to_context(decoder_ctx, video->codecpar) faled");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -579,7 +613,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("Failed to open codec for stream #%u"), video_stream);
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -591,7 +625,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 
 		g_use_hw_acceleration = true;
 
-		type = av_hwdevice_find_type_by_name(g_hw_device.ToUTF8());
+		type = av_hwdevice_find_type_by_name(hw_device.ToUTF8());
 		if (type == AV_HWDEVICE_TYPE_NONE)
 		{
 			wxString msg;
@@ -601,7 +635,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
 				msg += wxString(av_hwdevice_get_type_name(type)) + " ";
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -611,7 +645,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if (avformat_open_input(&input_ctx, csMovieName.ToUTF8(), NULL, NULL) != 0) {
 			wxString msg = wxT("Cannot open input file: ") + csMovieName;
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -620,7 +654,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if (avformat_find_stream_info(input_ctx, NULL) < 0) {
 			wxString msg = wxT("Cannot find input stream information.");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -630,7 +664,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if (ret < 0) {
 			wxString msg = wxT("Cannot find a video stream in the input file.");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -646,7 +680,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 				msg.Printf(wxT("Decoder %s does not support device type %s."),
 					wxString(decoder->name), wxString(av_hwdevice_get_type_name(type)));
 				SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-				wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+				ShowOpenMovieError(msg);
 				CloseMovie();
 				return false;
 			}
@@ -661,7 +695,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("Failed to find decoder HW config with support of device type %s for current video."), wxString(av_hwdevice_get_type_name(type)));
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -672,7 +706,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("avcodec_alloc_context3 faled with device type %s"), wxString(av_hwdevice_get_type_name(type)));
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -684,7 +718,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("avcodec_parameters_to_context(decoder_ctx, video->codecpar) faled with device type %s"), wxString(av_hwdevice_get_type_name(type)));
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -697,7 +731,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("hw_decoder_init(decoder_ctx, type) faled with device type %s"), wxString(av_hwdevice_get_type_name(type)));
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -707,7 +741,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("Failed to open codec for stream #%u with device type %s"), video_stream, wxString(av_hwdevice_get_type_name(type)));
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -721,7 +755,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 			wxString msg;
 			msg.Printf(wxT("init_filters \"%s\" failed"), g_filter_descr);
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -736,7 +770,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 	if (!(frame = av_frame_alloc())) {
 		wxString msg = wxT("Can not alloc frame");
 		SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-		wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+		ShowOpenMovieError(msg);
 		CloseMovie();
 		return false;
 	}
@@ -746,7 +780,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if (!(sw_frame = av_frame_alloc())) {
 			wxString msg = wxT("Can not alloc sw_frame");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -757,7 +791,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		if (!(filt_frame = av_frame_alloc())) {
 			wxString msg = wxT("Can not alloc filt_frame");
 			SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-			wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+			ShowOpenMovieError(msg);
 			CloseMovie();
 			return false;
 		}
@@ -785,7 +819,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 		wxString msg;
 		msg.Printf(wxT("Failed to get HW surface format with device type %s"), wxString(av_hwdevice_get_type_name(type)));
 		SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-		wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+		ShowOpenMovieError(msg);
 		CloseMovie();
 		return false;
 	}
@@ -805,7 +839,7 @@ bool FFMPEGVideo::OpenMovie(wxString csMovieName, void *pVideoWindow, int device
 	{
 		wxString msg = wxString::Format(wxT("ERROR: Video \"%s\" has wrong frame sizes: FRAME_WIDTH: %d, FRAME_HEIGHT: %d\n"), csMovieName, m_origWidth, m_origHeight);
 		SaveToReportLog(wxString::Format(wxT("FFMPEGVideo::OpenMovie(): %s\n"), msg));
-		wxMessageBox(msg, wxT("FFMPEGVideo::OpenMovie"));
+		ShowOpenMovieError(msg);
 		CloseMovie();
 		return false;
 	}
@@ -1062,18 +1096,14 @@ int FFMPEGVideo::ConvertToBGR(u8* frame_data, simple_buffer<u8>& ImBGR, int xmin
 	if (ret < 0) return ret;
 
 	// Fast path for NV12 when frame is not downscaled (e.g. AMD D3D11VA hardware decode)
-	if ((src_fmt == AV_PIX_FMT_NV12) && (m_origWidth == m_Width) && (m_origHeight == m_Height) && !g_use_cuda_gpu)
+	if ((src_fmt == AV_PIX_FMT_NV12) && (m_origWidth == m_Width) && (m_origHeight == m_Height) && !g_use_cuda_gpu &&
+		(xmin >= 0) && (ymin >= 0) && (xmin <= xmax) && (ymin <= ymax) && (xmax < m_Width) && (ymax < m_Height))
 	{
-		int cl_xmin = (xmin < 0) ? 0 : ((xmin >= m_Width) ? m_Width - 1 : xmin);
-		int cl_xmax = (xmax < 0) ? 0 : ((xmax >= m_Width) ? m_Width - 1 : xmax);
-		int cl_ymin = (ymin < 0) ? 0 : ((ymin >= m_Height) ? m_Height - 1 : ymin);
-		int cl_ymax = (ymax < 0) ? 0 : ((ymax >= m_Height) ? m_Height - 1 : ymax);
-
-		int crop_xmin = cl_xmin & ~1;
-		int crop_ymin = cl_ymin & ~1;
-		int crop_xmax = cl_xmax | 1;
+		int crop_xmin = xmin & ~1;
+		int crop_ymin = ymin & ~1;
+		int crop_xmax = xmax | 1;
 		if (crop_xmax >= m_Width) crop_xmax = m_Width - 1;
-		int crop_ymax = cl_ymax | 1;
+		int crop_ymax = ymax | 1;
 		if (crop_ymax >= m_Height) crop_ymax = m_Height - 1;
 		int crop_w = crop_xmax - crop_xmin + 1;
 		int crop_h = crop_ymax - crop_ymin + 1;
@@ -1092,11 +1122,10 @@ int FFMPEGVideo::ConvertToBGR(u8* frame_data, simple_buffer<u8>& ImBGR, int xmin
 			uint8_t* dst_data[4] = { ImBGR.m_pData, NULL, NULL, NULL };
 			int dst_linesize[4] = { w * 3, 0, 0, 0 };
 
-			SwsContext* sws = tl_sws_cache.get(w, h, AV_PIX_FMT_NV12, w, h, AV_PIX_FMT_BGR24);
-			if (sws)
-			{
-				ret = sws_scale(sws, crop_src_data, crop_src_linesize, 0, h, dst_data, dst_linesize);
-			}
+			SwsContext* sws = tl_sws_crop_cache.get(w, h, AV_PIX_FMT_NV12, w, h, AV_PIX_FMT_BGR24);
+			if (!sws) return -1;
+			ret = sws_scale(sws, crop_src_data, crop_src_linesize, 0, h, dst_data, dst_linesize);
+			if (ret <= 0) return -1;
 		}
 		else
 		{
@@ -1105,11 +1134,10 @@ int FFMPEGVideo::ConvertToBGR(u8* frame_data, simple_buffer<u8>& ImBGR, int xmin
 			uint8_t* dst_data[4] = { tl_crop_bgr.data(), NULL, NULL, NULL };
 			int dst_linesize[4] = { crop_w * 3, 0, 0, 0 };
 
-			SwsContext* sws = tl_sws_cache.get(crop_w, crop_h, AV_PIX_FMT_NV12, crop_w, crop_h, AV_PIX_FMT_BGR24);
-			if (sws)
-			{
-				ret = sws_scale(sws, crop_src_data, crop_src_linesize, 0, crop_h, dst_data, dst_linesize);
-			}
+			SwsContext* sws = tl_sws_crop_cache.get(crop_w, crop_h, AV_PIX_FMT_NV12, crop_w, crop_h, AV_PIX_FMT_BGR24);
+			if (!sws) return -1;
+			ret = sws_scale(sws, crop_src_data, crop_src_linesize, 0, crop_h, dst_data, dst_linesize);
+			if (ret <= 0) return -1;
 
 			int off_x = xmin - crop_xmin;
 			int off_y = ymin - crop_ymin;
