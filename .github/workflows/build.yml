@@ -158,15 +158,24 @@ jobs:
 
           Remove-Item -Path "$outDir\*.pdb" -ErrorAction SilentlyContinue
 
-          Compress-Archive -Path "$outDir\*" -DestinationPath "VideoSubFinder_x64.zip" -Force
-          Write-Host "Build and packaging completed successfully!"
+          # version in file name: tag name for releases (v1.2.1), otherwise <branch>-<short sha>
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}"
+          } else {
+            $version = ("${{ github.ref_name }}" -replace '[^A-Za-z0-9._-]', '-') + "-" + "${{ github.sha }}".Substring(0, 7)
+          }
+          $zipBaseName = "VideoSubFinder_${version}_x64"
+          "ZIP_BASE_NAME=$zipBaseName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          Compress-Archive -Path "$outDir\*" -DestinationPath "$zipBaseName.zip" -Force
+          Write-Host "Build and packaging completed successfully: $zipBaseName.zip"
 
       # upload the folder, not the zip: upload-artifact always wraps files in its own zip,
-      # so uploading VideoSubFinder_x64.zip would produce a zip inside a zip
+      # so uploading the release zip would produce a zip inside a zip
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VideoSubFinder_x64
+          name: ${{ env.ZIP_BASE_NAME }}
           path: Build/Release_x64/
           retention-days: 14
 
@@ -174,7 +183,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: VideoSubFinder_x64.zip
+          files: ${{ env.ZIP_BASE_NAME }}.zip
           draft: false
           prerelease: false
         env:

@@ -49,7 +49,7 @@ The geometry suffix is required by **Create Cleared TXT Images** and **Join Imag
 ## Installation
 
 ### Pre-built release
-1. Download `VideoSubFinder_x64.zip` from the **Releases** (or **Actions**) tab.
+1. Download `VideoSubFinder_<version>_x64.zip` (e.g. `VideoSubFinder_v1.2.1_x64.zip`) from the **Releases** tab, or the build artifact from the **Actions** tab.
 2. Extract it anywhere, e.g. `C:\VideoSubFinder\`.
 3. Optional, for **Clean RGB Images**: install Python 3 and the dependencies:
    ```bash
@@ -153,11 +153,11 @@ The executable is written to `Build\Release_x64\`.
 
 ## Releases (GitHub Actions)
 
-`.github/workflows/build.yml` builds every push and pull request and uploads `VideoSubFinder_x64.zip` as a build artifact. Pushing a `v*` tag also publishes a GitHub Release:
+`.github/workflows/build.yml` builds every push and pull request and uploads the build folder as an artifact named `VideoSubFinder_<branch>-<sha>_x64`. Pushing a `v*` tag also publishes a GitHub Release with `VideoSubFinder_<tag>_x64.zip`:
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.2.1
+git push origin v1.2.1
 ```
 
 ---
